@@ -65,7 +65,7 @@ def build_knowledge_chunks(knowledge_docs):
 
     return knowledge_chunks
 
-
+#为一组知识库文档（knowledge_docs）生成一段简短的预览文本。
 def build_preview_text(knowledge_docs):
     preview_lines = []
 

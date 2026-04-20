@@ -1,11 +1,17 @@
 # 管理员上传 3 份服装知识文件，并把它们保存到 data/ 目录。
 
 from collections import Counter
+import hashlib
+import json
 
 import streamlit as st
 
-from config_data import DATA_DIR, KNOWLEDGE_FILES
-from knowledge_base import build_preview_text, load_knowledge_files
+from config_data import DATA_DIR, FILE_HASH_RECORD_PATH, KNOWLEDGE_FILES
+from knowledge_base import (
+    build_knowledge_chunks,
+    build_preview_text,
+    load_knowledge_files,
+)
 
 
 # 固定本项目允许上传的知识文件名，后面会用它做严格校验。
@@ -43,13 +49,83 @@ def validate_uploaded_files(uploaded_files):
     return error_messages
 
 
-# 保存上传文件：通过校验后再覆盖写入 data/，这一步才算真正更新知识文件。
-def save_uploaded_files(uploaded_files, target_dir=DATA_DIR):
-    target_dir.mkdir(parents=True, exist_ok=True)
+# 读取历史 MD5 记录：如果第一次运行还没有记录文件，就返回空字典。
+def load_hash_record(record_path=FILE_HASH_RECORD_PATH):
+    if not record_path.exists():
+        return {}
+
+    return json.loads(record_path.read_text(encoding="utf-8"))
+
+
+# 计算文件内容的 MD5：这里直接基于 bytes 计算，避免字符串编码差异影响比较结果。
+def calculate_file_md5(file_bytes):
+    return hashlib.md5(file_bytes).hexdigest()
+
+
+# 把上传文件整理成统一结构，后面校验、比较、保存都复用这份数据。
+def build_uploaded_file_snapshots(uploaded_files):
+    file_snapshots = []
 
     for uploaded_file in uploaded_files:
-        target_path = target_dir / uploaded_file.name
-        target_path.write_bytes(uploaded_file.getvalue())
+        file_bytes = uploaded_file.getvalue()
+        file_snapshots.append(
+            {
+                "name": uploaded_file.name,
+                "type": uploaded_file.type or "text/plain",
+                "size": uploaded_file.size,
+                "bytes": file_bytes,
+                "md5": calculate_file_md5(file_bytes),
+            }
+        )
+
+    return file_snapshots
+
+
+# 比较上传文件和历史 MD5：只让真正变化的文件继续进入保存和后续处理。
+def compare_uploaded_files(file_snapshots, hash_record):
+    changed_files = []
+    unchanged_files = []
+    updated_hash_record = hash_record.copy()
+
+    for snapshot in file_snapshots:
+        file_name = snapshot["name"]
+        old_md5 = hash_record.get(file_name)
+        new_md5 = snapshot["md5"]
+
+        if old_md5 == new_md5:
+            unchanged_files.append(file_name)
+        else:
+            changed_files.append(file_name)
+            updated_hash_record[file_name] = new_md5
+
+    return changed_files, unchanged_files, updated_hash_record
+
+
+# 保存上传文件：通过校验且确认内容变化后，再覆盖写入 data/。
+def save_uploaded_files(file_snapshots, target_dir=DATA_DIR):
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    for snapshot in file_snapshots:
+        target_path = target_dir / snapshot["name"]
+        target_path.write_bytes(snapshot["bytes"])
+
+
+# 保存最新 MD5 记录：后续再次上传同样内容时，就可以直接跳过无变化文件。
+def save_hash_record(hash_record, record_path=FILE_HASH_RECORD_PATH):
+    record_path.write_text(
+        json.dumps(hash_record, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+# 把前几个 chunk 格式化成易读文本，方便在页面快速确认切块结果是否合理。
+def build_chunk_preview_text(knowledge_chunks, limit=5):
+    preview_lines = []
+
+    for chunk in knowledge_chunks[:limit]:
+        preview_lines.append(f"{chunk['chunk_id']} -> {chunk['content']}")
+
+    return "\n".join(preview_lines)
 
 
 st.title("知识库更新服务")
@@ -86,13 +162,48 @@ if st.button("开始更新知识库"):
                 st.error(error_message)
         else:
             try:
-                # 先保存到 data/，再调用后端知识库模块做真实读取验证。
-                save_uploaded_files(uploaded_files)
-                knowledge_docs = load_knowledge_files()
-                preview_text = build_preview_text(knowledge_docs)
+                file_snapshots = build_uploaded_file_snapshots(uploaded_files)
+                hash_record = load_hash_record()
+                changed_files, unchanged_files, updated_hash_record = compare_uploaded_files(
+                    file_snapshots,
+                    hash_record,
+                )
 
-                st.success("知识库文件上传成功，已完成基础读取验证。")
-                st.write(f"已成功加载 {len(knowledge_docs)} 个知识文件。")
-                st.code(preview_text, language="text")
+                # 没有任何文件变化时，直接结束更新，避免重复写入和重复处理。
+                if not changed_files:
+                    st.info("3 个知识文件内容均未变化，已跳过保存和重建。")
+
+                    if unchanged_files:
+                        st.write(f"未变化文件：{', '.join(unchanged_files)}")
+                else:
+                    changed_file_snapshots = [
+                        snapshot
+                        for snapshot in file_snapshots
+                        if snapshot["name"] in changed_files
+                    ]
+
+                    # 只保存变化的文件，再调用后端知识库模块做真实读取验证。
+                    save_uploaded_files(changed_file_snapshots)
+                    st.write(f"已更新文件：{', '.join(changed_files)}")
+
+                    if unchanged_files:
+                        st.write(f"未变化文件：{', '.join(unchanged_files)}")
+
+                    knowledge_docs = load_knowledge_files()
+                    # 上传页继续往后走一步：把知识文件切成 chunk，确认离线处理链路已经打通。
+                    knowledge_chunks = build_knowledge_chunks(knowledge_docs)
+                    preview_text = build_preview_text(knowledge_docs)
+                    chunk_preview_text = build_chunk_preview_text(knowledge_chunks)
+
+                    # 只有知识处理成功后，才写入最新 MD5，避免失败时错误地跳过后续更新。
+                    save_hash_record(updated_hash_record)
+
+                    st.success("知识库文件上传成功，已完成基础读取验证。")
+                    st.write(f"已成功加载 {len(knowledge_docs)} 个知识文件。")
+                    st.write(f"已切分出 {len(knowledge_chunks)} 个文本块。")
+                    st.subheader("知识文件预览")
+                    st.code(preview_text, language="text")
+                    st.subheader("示例文本块预览")
+                    st.code(chunk_preview_text, language="text")
             except Exception as error:
                 st.error(f"知识库更新失败：{error}")
