@@ -8,6 +8,13 @@ DATA_DIR = BASE_DIR / "data"
 CHAT_HISTORY_DIR = BASE_DIR / "chat_history"
 VECTOR_DB_DIR = BASE_DIR / "chroma_db"
 FILE_HASH_RECORD_PATH = BASE_DIR / "knowledge_file_hashes.json"
+VECTOR_COLLECTION_NAME = "clothing_knowledge_base"
+EMBEDDING_MODEL_NAME = "text-embedding-v1"
+DEFAULT_TOP_K = 4
+DEFAULT_TEST_QUERY = (
+    "我身高168，体重65kg，想买一件日常穿的T恤，"
+    "推荐什么尺码和颜色？洗的时候需要注意什么？"
+)
 
 KNOWLEDGE_FILES = [
     "尺码推荐.txt",

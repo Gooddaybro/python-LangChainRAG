@@ -12,6 +12,7 @@ from knowledge_base import (
     build_preview_text,
     load_knowledge_files,
 )
+from vector_stores import rebuild_vector_store
 
 
 # 固定本项目允许上传的知识文件名，后面会用它做严格校验。
@@ -194,13 +195,16 @@ if st.button("开始更新知识库"):
                     knowledge_chunks = build_knowledge_chunks(knowledge_docs)
                     preview_text = build_preview_text(knowledge_docs)
                     chunk_preview_text = build_chunk_preview_text(knowledge_chunks)
+                    # 只有文件发生变化时，才重建向量库；这样向量重建流程就受 MD5 控制了。
+                    rebuild_vector_store(knowledge_chunks)
 
                     # 只有知识处理成功后，才写入最新 MD5，避免失败时错误地跳过后续更新。
                     save_hash_record(updated_hash_record)
 
-                    st.success("知识库文件上传成功，已完成基础读取验证。")
+                    st.success("知识库文件上传成功，已完成基础读取验证和向量库重建。")
                     st.write(f"已成功加载 {len(knowledge_docs)} 个知识文件。")
                     st.write(f"已切分出 {len(knowledge_chunks)} 个文本块。")
+                    st.write("已根据最新知识文件完成向量库重建。")
                     st.subheader("知识文件预览")
                     st.code(preview_text, language="text")
                     st.subheader("示例文本块预览")
