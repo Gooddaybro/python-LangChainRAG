@@ -61,7 +61,7 @@ def rebuild_vector_store(knowledge_chunks):
 
 
 # 根据用户问题检索最相关的知识块，并把结果整理成更容易打印和后续使用的结构。
-def search_similar_chunks(query, top_k=DEFAULT_TOP_K):
+def search_similar_chunks(query, top_k=DEFAULT_TOP_K, metadata_filter=None):
     embeddings = get_embeddings()
     vector_store = Chroma(
         collection_name=VECTOR_COLLECTION_NAME,
@@ -69,7 +69,11 @@ def search_similar_chunks(query, top_k=DEFAULT_TOP_K):
         persist_directory=str(VECTOR_DB_DIR),
     )
 
-    results = vector_store.similarity_search_with_score(query, k=top_k)
+    results = vector_store.similarity_search_with_score(
+        query,
+        k=top_k,
+        filter=metadata_filter,
+    )
     matched_chunks = []
 
     for document, score in results:

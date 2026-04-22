@@ -13,6 +13,9 @@ EMBEDDING_MODEL_NAME = "text-embedding-v1"
 CHAT_MODEL_NAME = "qwen-turbo"
 CHAT_TEMPERATURE = 0.1
 DEFAULT_TOP_K = 4
+SIZE_KNOWLEDGE_FILE = "尺码推荐.txt"
+COLOR_KNOWLEDGE_FILE = "颜色选择.txt"
+CARE_KNOWLEDGE_FILE = "洗涤养护.txt"
 DEFAULT_TEST_QUERY = (
     "我身高168，体重65kg，想买一件日常穿的T恤，"
     "推荐什么尺码和颜色？洗的时候需要注意什么？"
