@@ -12,6 +12,31 @@ from size_matcher import match_size_rule
 from vector_stores import search_similar_chunks
 
 
+COLOR_DAILY_WEAR_KEYWORDS = [
+    "场合",
+    "日常通勤",
+    "基础色",
+    "黑白灰",
+    "米色",
+    "藏蓝",
+    "简约大气",
+    "休闲场合",
+]
+
+CARE_TSHIRT_WASH_KEYWORDS = [
+    "T恤",
+    "洗涤",
+    "机洗",
+    "手洗",
+    "水温",
+    "中性洗涤剂",
+    "浅色与深色分开洗",
+    "深色分开洗",
+    "晾晒",
+    "收纳",
+]
+
+
 # 初始化聊天模型：最小版本只保留模型名和温度配置。
 def get_chat_model():
     return ChatTongyi(
@@ -20,21 +45,55 @@ def get_chat_model():
     )
 
 
+def score_color_chunk_for_daily_wear(chunk):
+    content = chunk["content"]
+    return sum(1 for keyword in COLOR_DAILY_WEAR_KEYWORDS if keyword in content)
+
+
+def rerank_color_chunks(color_chunks):
+    return sorted(
+        color_chunks,
+        key=lambda chunk: (-score_color_chunk_for_daily_wear(chunk), chunk["score"]),
+    )
+
+
+def score_care_chunk_for_tshirt_wash(chunk):
+    content = chunk["content"]
+    return sum(1 for keyword in CARE_TSHIRT_WASH_KEYWORDS if keyword in content)
+
+
+def rerank_care_chunks(care_chunks):
+    return sorted(
+        care_chunks,
+        key=lambda chunk: (-score_care_chunk_for_tshirt_wash(chunk), chunk["score"]),
+    )
+
+
 # 把复合问题拆成“颜色”和“洗涤”两个子问题，再按来源文件做定向检索。
 def retrieve_topic_chunks(user_query):
-    color_query = f"{user_query}。请只关注颜色推荐和日常穿搭颜色选择。"
-    care_query = f"{user_query}。请只关注洗涤养护和清洗注意事项。"
+    color_query = (
+        f"{user_query}。"
+        "颜色选择，日常穿，日常通勤，场合，基础色，"
+        "黑白灰，米色，藏蓝，简约大气。"
+    )
+    care_query = (
+        f"{user_query}。"
+        "T恤，洗涤，清洗，养护，机洗，手洗，水温，"
+        "中性洗涤剂，浅色与深色分开洗，晾晒，收纳。"
+    )
 
     color_chunks = search_similar_chunks(
         color_query,
         top_k=2,
         metadata_filter={"file_name": COLOR_KNOWLEDGE_FILE},
     )
+    color_chunks = rerank_color_chunks(color_chunks)
     care_chunks = search_similar_chunks(
         care_query,
-        top_k=2,
+        top_k=4,
         metadata_filter={"file_name": CARE_KNOWLEDGE_FILE},
     )
+    care_chunks = rerank_care_chunks(care_chunks)[:2]
 
     return {
         "color_chunks": color_chunks,
@@ -99,7 +158,9 @@ def build_rag_prompt(user_query, size_match, topic_chunks):
     return f"""
 你是一个服装知识库问答助手。
 请严格优先根据提供的规则匹配结果和参考资料回答问题，不要脱离知识库内容自由发挥。
-如果某一项资料不足，请明确说明“知识库中没有明确说明”。
+如果参考资料中包含相关原则、适用场景、颜色范围、洗涤方式或注意事项，
+你必须基于这些资料给出可执行建议。
+只有当对应部分完全没有相关参考资料时，才说明“知识库中没有明确说明”。
 
 用户问题：
 {user_query}
@@ -114,7 +175,10 @@ def build_rag_prompt(user_query, size_match, topic_chunks):
 1. 使用中文回答。
 2. 必须按“尺码建议 / 颜色建议 / 洗涤建议”三个部分作答。
 3. 如果尺码规则已给出主推荐和备选尺码，必须保留这个推荐关系，不要改写成其他尺码。
-4. 如果颜色或洗涤资料不足，就明确说明知识库中没有明确说明。
+4. 颜色建议必须优先使用颜色参考资料中的场景、基础色、通勤色、休闲色信息。
+5. 洗涤建议必须优先使用洗涤参考资料中的材质、洗涤方式、水温、晾晒、收纳信息。
+6. 不要因为资料是原则性建议而拒答；原则性资料也可以转化成用户可执行的建议。
+7. 只有对应参考资料完全无关时，才说“知识库中没有明确说明”。
 """.strip()
 
 
