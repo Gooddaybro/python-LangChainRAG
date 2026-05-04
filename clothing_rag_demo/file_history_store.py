@@ -3,7 +3,7 @@ from datetime import datetime
 
 from config_data import CHAT_HISTORY_DIR
 
-
+# 负责保存和读取聊天历史
 DEFAULT_SESSION_ID = "default"
 DEFAULT_HISTORY_LIMIT = 3
 

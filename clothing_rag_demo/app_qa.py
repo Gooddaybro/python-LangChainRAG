@@ -2,15 +2,17 @@ import streamlit as st
 from requests.exceptions import RequestException
 
 from config_data import DEFAULT_TEST_QUERY
+from file_history_store import append_chat_turn, clear_chat_history, load_chat_history
 from rag import generate_answer
 
-
+# 负责页面输入和展示
+# 页面配置
 st.set_page_config(
     page_title="服装知识库问答",
     layout="wide",
 )
 
-
+# 展示尺码规则匹配结果
 def render_size_match(size_match):
     if not size_match:
         st.info("未返回尺码规则匹配结果。")
@@ -31,7 +33,7 @@ def render_size_match(size_match):
         st.write("备选规则：")
         st.code(size_match["alternative_rule"], language="text")
 
-
+# 返回的结构化结果可视化
 def render_chunks(title, chunks):
     st.subheader(title)
 
@@ -45,7 +47,33 @@ def render_chunks(title, chunks):
             st.code(chunk["content"], language="text")
 
 
+# 展示本次提交时实际传给 RAG 的最近历史，方便观察多轮对话是否生效。
+def render_chat_history(chat_history):
+    if not chat_history:
+        st.info("本次没有使用历史对话。")
+        return
+
+    for index, chat_turn in enumerate(chat_history, start=1):
+        st.write(f"第 {index} 轮")
+        st.write(f"用户：{chat_turn['user_query']}")
+        st.write(f"助手：{chat_turn['assistant_answer']}")
+
+
+# 展示 RAG 内部实际使用的输入，方便排查历史是否污染当前问题。
+def render_debug_queries(result):
+    st.write("尺码匹配实际输入：")
+    st.code(result["size_query"], language="text")
+
+    st.write("向量检索实际输入：")
+    st.code(result["retrieval_query"], language="text")
+
+
+# 主界面
 st.title("服装知识库问答")
+
+if st.button("清空聊天历史"):
+    clear_chat_history()
+    st.success("聊天历史已清空。")
 
 query = st.text_area(
     "请输入服装相关问题",
@@ -61,7 +89,12 @@ if st.button("提交问题", type="primary"):
     else:
         try:
             with st.spinner("正在检索知识库并生成答案..."):
-                result = generate_answer(clean_query)
+                # 先读取最近 3 轮历史，让 RAG 能理解“宽松一点”等追问。
+                chat_history = load_chat_history(limit=3)
+                result = generate_answer(clean_query, chat_history=chat_history)
+
+                # 只有答案成功生成后才写入历史，避免把失败请求或错误信息保存进去。
+                append_chat_turn(clean_query, result["answer"])
         except FileNotFoundError as error:
             st.error("知识库文件不存在，请先上传知识文件并完成向量库重建。")
             st.code(str(error), language="text")
@@ -78,6 +111,12 @@ if st.button("提交问题", type="primary"):
 
         st.subheader("回答")
         st.write(result["answer"])
+
+        with st.expander("本次使用的聊天历史"):
+            render_chat_history(result["chat_history"])
+
+        with st.expander("本次调试信息"):
+            render_debug_queries(result)
 
         with st.expander("尺码规则匹配"):
             render_size_match(result["size_match"])

@@ -43,6 +43,12 @@ def extract_user_measurements(user_query):
     }
 
 
+def has_complete_measurements(user_query):
+    """判断一段文本里是否同时包含身高和体重。"""
+    measurements = extract_user_measurements(user_query)
+    return measurements["height_cm"] is not None and measurements["weight_jin"] is not None
+
+
 def parse_size_rule_line(line):
     pattern = re.compile(
         r"身高[:：]\s*(\d+)(?:-(\d+))?cm(\+)?[，,\s]*"
