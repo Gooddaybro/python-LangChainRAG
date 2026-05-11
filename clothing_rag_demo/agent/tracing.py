@@ -8,7 +8,7 @@ from clothing_rag_demo.config_data import BASE_DIR
 
 DEFAULT_TRACE_DIR = BASE_DIR / "traces"
 
-
+# 记录输入输出，方便调试
 def is_trace_to_file_enabled():
     return os.environ.get("AGENT_TRACE_TO_FILE", "").strip().lower() == "true"
 

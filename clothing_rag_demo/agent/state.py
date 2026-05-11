@@ -5,7 +5,7 @@ from typing import Any
 @dataclass
 class AgentState:
     """State container for one agent run."""
-
+# 真实数据来源
     user_query: str
     chat_history: list[dict[str, Any]] = field(default_factory=list)
     intent_result: dict[str, Any] | None = None

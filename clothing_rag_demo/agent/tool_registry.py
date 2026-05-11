@@ -14,6 +14,7 @@ from clothing_rag_demo.tools.policy_tool import run_policy_tool
 from clothing_rag_demo.tools.rag_tool import run_rag_tool
 from clothing_rag_demo.tools.size_tool import run_size_tool
 
+# 加工数据，定义什么工具能干什么
 
 ToolRunner = Callable[[AgentState], dict[str, Any]]
 ToolPredicate = Callable[[AgentState], bool]

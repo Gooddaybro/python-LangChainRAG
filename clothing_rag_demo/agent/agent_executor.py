@@ -16,6 +16,7 @@ from clothing_rag_demo.agent.tracing import persist_trace_if_enabled
 from clothing_rag_demo.rag import get_chat_model
 from clothing_rag_demo.tools.memory_tool import run_memory_tool
 
+# pipeline 调度转动
 
 def contains_any(text, keywords):
     return any(keyword in text for keyword in keywords)

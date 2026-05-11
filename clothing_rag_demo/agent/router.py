@@ -1,6 +1,6 @@
 import re
 
-
+# 流水线分拣员，该不该触发某个tool？ 也就是说属于pipeline的分叉点
 INTENT_SIZE_RECOMMENDATION = "size_recommendation"
 INTENT_PRODUCT_QA = "product_qa"
 INTENT_POLICY_QA = "policy_qa"
