@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+.venv/
+.idea/
+.vscode/
+
+clothing_rag_demo/chat_history/*.jsonl
+clothing_rag_demo/chroma_db/
+clothing_rag_demo/_chroma_probe/
