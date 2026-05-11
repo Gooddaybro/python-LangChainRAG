@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from config_data import CHAT_HISTORY_DIR
+from clothing_rag_demo.config_data import CHAT_HISTORY_DIR
 
 # 负责保存和读取聊天历史
 DEFAULT_SESSION_ID = "default"

@@ -1,6 +1,11 @@
 import re
 
-from config_data import CARE_KNOWLEDGE_FILE, COLOR_KNOWLEDGE_FILE, DATA_DIR, KNOWLEDGE_FILES
+from clothing_rag_demo.config_data import (
+    CARE_KNOWLEDGE_FILE,
+    COLOR_KNOWLEDGE_FILE,
+    DATA_DIR,
+    KNOWLEDGE_FILES,
+)
 
 
 # 加载知识文件：把 data 目录中的 3 个 txt 文件读到内存里。

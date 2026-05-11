@@ -6,13 +6,13 @@ import json
 
 import streamlit as st
 
-from config_data import DATA_DIR, FILE_HASH_RECORD_PATH, KNOWLEDGE_FILES
-from knowledge_base import (
+from clothing_rag_demo.config_data import DATA_DIR, FILE_HASH_RECORD_PATH, KNOWLEDGE_FILES
+from clothing_rag_demo.knowledge_base import (
     build_knowledge_chunks,
     build_preview_text,
     load_knowledge_files,
 )
-from vector_stores import rebuild_vector_store
+from clothing_rag_demo.vector_stores import rebuild_vector_store
 
 
 # 固定本项目允许上传的知识文件名，后面会用它做严格校验。

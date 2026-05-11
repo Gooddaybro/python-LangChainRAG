@@ -1,15 +1,15 @@
 from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from config_data import (
+from clothing_rag_demo.config_data import (
     CARE_KNOWLEDGE_FILE,
     CHAT_MODEL_NAME,
     CHAT_TEMPERATURE,
     COLOR_KNOWLEDGE_FILE,
     DEFAULT_TEST_QUERY,
 )
-from size_matcher import has_complete_measurements, match_size_rule
-from vector_stores import search_similar_chunks
+from clothing_rag_demo.size_matcher import has_complete_measurements, match_size_rule
+from clothing_rag_demo.vector_stores import search_similar_chunks
 
 
 COLOR_DAILY_WEAR_KEYWORDS = [

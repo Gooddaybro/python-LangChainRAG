@@ -3,13 +3,13 @@ import math
 
 from langchain_community.embeddings import DashScopeEmbeddings
 
-from config_data import (
+from clothing_rag_demo.config_data import (
     DEFAULT_TEST_QUERY,
     DEFAULT_TOP_K,
     EMBEDDING_MODEL_NAME,
     VECTOR_DB_DIR,
 )
-from knowledge_base import build_knowledge_chunks, load_knowledge_files
+from clothing_rag_demo.knowledge_base import build_knowledge_chunks, load_knowledge_files
 
 
 _EMBEDDINGS_CACHE = None

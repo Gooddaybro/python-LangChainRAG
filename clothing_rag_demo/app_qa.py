@@ -1,9 +1,14 @@
 import streamlit as st
 from requests.exceptions import RequestException
 
-from config_data import DEFAULT_TEST_QUERY
-from file_history_store import append_chat_turn, clear_chat_history, load_chat_history
-from rag import generate_answer
+from clothing_rag_demo.agent.agent_executor import run_agent
+from clothing_rag_demo.config_data import DEFAULT_TEST_QUERY
+from clothing_rag_demo.file_history_store import (
+    append_chat_turn,
+    clear_chat_history,
+    load_chat_history,
+)
+from clothing_rag_demo.rag import generate_answer
 
 # 负责页面输入和展示
 # 页面配置
@@ -68,12 +73,39 @@ def render_debug_queries(result):
     st.code(result["retrieval_query"], language="text")
 
 
+def render_agent_debug(debug):
+    st.write(f"用户问题：{debug['user_query']}")
+    st.write("意图判断：")
+    st.json(debug["intent_result"])
+
+    st.write("调用工具：")
+    st.json(debug["selected_tools"])
+
+    st.write("使用的历史信息：")
+    st.json(debug["used_history"])
+    st.write(f"历史处理说明：{debug['ignored_history_reason']}")
+
+    if debug["retrieval_query"]:
+        st.write("检索输入：")
+        st.code(debug["retrieval_query"], language="text")
+
+    render_chunks("Agent 检索资料", debug["retrieved_chunks"])
+
+    st.write("工具结果：")
+    st.json(debug["tool_results"])
+
+    st.write("最终 Prompt：")
+    st.code(debug["final_prompt"], language="text")
+
+
 # 主界面
 st.title("服装知识库问答")
 
 if st.button("清空聊天历史"):
     clear_chat_history()
     st.success("聊天历史已清空。")
+
+use_agent = st.checkbox("启用导购 Agent", value=False)
 
 query = st.text_area(
     "请输入服装相关问题",
@@ -91,7 +123,11 @@ if st.button("提交问题", type="primary"):
             with st.spinner("正在检索知识库并生成答案..."):
                 # 先读取最近 3 轮历史，让 RAG 能理解“宽松一点”等追问。
                 chat_history = load_chat_history(limit=3)
-                result = generate_answer(clean_query, chat_history=chat_history)
+
+                if use_agent:
+                    result = run_agent(clean_query, chat_history=chat_history)
+                else:
+                    result = generate_answer(clean_query, chat_history=chat_history)
 
                 # 只有答案成功生成后才写入历史，避免把失败请求或错误信息保存进去。
                 append_chat_turn(clean_query, result["answer"])
@@ -112,14 +148,18 @@ if st.button("提交问题", type="primary"):
         st.subheader("回答")
         st.write(result["answer"])
 
-        with st.expander("本次使用的聊天历史"):
-            render_chat_history(result["chat_history"])
+        if use_agent:
+            with st.expander("Agent Debug"):
+                render_agent_debug(result["debug"])
+        else:
+            with st.expander("本次使用的聊天历史"):
+                render_chat_history(result["chat_history"])
 
-        with st.expander("本次调试信息"):
-            render_debug_queries(result)
+            with st.expander("本次调试信息"):
+                render_debug_queries(result)
 
-        with st.expander("尺码规则匹配"):
-            render_size_match(result["size_match"])
+            with st.expander("尺码规则匹配"):
+                render_size_match(result["size_match"])
 
-        render_chunks("颜色参考资料", result["topic_chunks"]["color_chunks"])
-        render_chunks("洗涤参考资料", result["topic_chunks"]["care_chunks"])
+            render_chunks("颜色参考资料", result["topic_chunks"]["color_chunks"])
+            render_chunks("洗涤参考资料", result["topic_chunks"]["care_chunks"])

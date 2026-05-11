@@ -1,6 +1,6 @@
 import re
 
-from config_data import DATA_DIR, SIZE_KNOWLEDGE_FILE
+from clothing_rag_demo.config_data import DATA_DIR, SIZE_KNOWLEDGE_FILE
 
 
 _SIZE_RULE_CACHE = None
