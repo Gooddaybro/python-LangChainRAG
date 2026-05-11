@@ -9,3 +9,7 @@ __pycache__/
 clothing_rag_demo/chat_history/*.jsonl
 clothing_rag_demo/chroma_db/
 clothing_rag_demo/_chroma_probe/
+clothing_rag_demo/traces/
+
+# 忽略整个 docs 目录
+docs/

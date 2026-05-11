@@ -1,0 +1,151 @@
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from clothing_rag_demo.agent.router import (
+    INTENT_INVENTORY_CHECK,
+    INTENT_POLICY_QA,
+    INTENT_PRODUCT_QA,
+    INTENT_RECOMMENDATION,
+    INTENT_SIZE_RECOMMENDATION,
+    has_measurement_signal,
+)
+from clothing_rag_demo.agent.state import AgentState
+from clothing_rag_demo.tools.policy_tool import run_policy_tool
+from clothing_rag_demo.tools.rag_tool import run_rag_tool
+from clothing_rag_demo.tools.size_tool import run_size_tool
+
+
+ToolRunner = Callable[[AgentState], dict[str, Any]]
+ToolPredicate = Callable[[AgentState], bool]
+
+RAG_FIRST_INTENTS = {
+    INTENT_PRODUCT_QA,
+    INTENT_RECOMMENDATION,
+    INTENT_INVENTORY_CHECK,
+}
+PRODUCT_CONTEXT_WORDS = ["这件", "衣服", "商品", "T恤", "外套", "适合", "面料", "材质"]
+SIZE_CONTEXT_WORDS = ["尺码", "码", "紧", "大", "小", "宽松", "合身", "适合我", "穿"]
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    result_key: str
+    should_run: ToolPredicate
+    run: ToolRunner
+    output_description: str
+
+
+def contains_any(text, keywords):
+    return any(keyword in text for keyword in keywords)
+
+
+def should_run_policy_tool(state):
+    return state.intent_result["intent"] == INTENT_POLICY_QA
+
+
+def should_run_rag_tool(state):
+    intent = state.intent_result["intent"]
+
+    if intent in RAG_FIRST_INTENTS:
+        return True
+
+    return intent == INTENT_SIZE_RECOMMENDATION and contains_any(
+        state.user_query,
+        PRODUCT_CONTEXT_WORDS,
+    )
+
+
+def should_run_size_tool(state):
+    intent = state.intent_result["intent"]
+    used_history = state.memory_result["used_history"]
+
+    if intent == INTENT_SIZE_RECOMMENDATION:
+        return True
+
+    if has_measurement_signal(state.user_query):
+        return True
+
+    if used_history.get("measurements_query") and contains_any(state.user_query, SIZE_CONTEXT_WORDS):
+        return True
+
+    return False
+
+
+def build_default_tool_registry(
+    policy_runner=run_policy_tool,
+    rag_runner=run_rag_tool,
+    size_runner=run_size_tool,
+):
+    def run_policy(state):
+        return policy_runner(state.agent_query)
+
+    def run_rag(state):
+        return rag_runner(
+            state.agent_query,
+            query_type=state.intent_result["query_type"],
+        )
+
+    def run_size(state):
+        return size_runner(state.user_query, chat_history=state.chat_history)
+
+    return [
+        ToolSpec(
+            name="policy_tool",
+            result_key="policy_tool",
+            should_run=should_run_policy_tool,
+            run=run_policy,
+            output_description="退换货、物流、售后政策来源检查和兜底。",
+        ),
+        ToolSpec(
+            name="rag_tool",
+            result_key="rag_tool",
+            should_run=should_run_rag_tool,
+            run=run_rag,
+            output_description="商品知识库检索。",
+        ),
+        ToolSpec(
+            name="size_tool",
+            result_key="size_tool",
+            should_run=should_run_size_tool,
+            run=run_size,
+            output_description="尺码规则匹配。",
+        ),
+    ]
+
+
+def matching_tool_names(state, registry):
+    return [tool.name for tool in registry if tool.should_run(state)]
+
+
+def find_tool(registry, name):
+    for tool in registry:
+        if tool.name == name:
+            return tool
+
+    return None
+
+
+def summarize_tool_result(result):
+    if not isinstance(result, dict):
+        return {"type": type(result).__name__}
+
+    summary = {}
+
+    for key in ["source_count", "has_policy_source", "recommended_size", "retrieval_query"]:
+        if key in result:
+            summary[key] = result[key]
+
+    if "retrieved_chunks" in result:
+        summary["retrieved_chunk_count"] = len(result["retrieved_chunks"])
+
+    return summary
+
+
+def execute_tool_spec(state, tool):
+    state.selected_tools.append(tool.name)
+    state.add_trace("tool_selected", tool=tool.name)
+    result = tool.run(state)
+    state.tool_results[tool.result_key] = result
+    state.add_trace("tool_result", tool=tool.name, result_summary=summarize_tool_result(result))
+    return result

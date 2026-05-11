@@ -2,60 +2,23 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from clothing_rag_demo.agent.router import (
     INTENT_CHAT,
-    INTENT_INVENTORY_CHECK,
     INTENT_POLICY_QA,
-    INTENT_PRODUCT_QA,
-    INTENT_RECOMMENDATION,
-    INTENT_SIZE_RECOMMENDATION,
     INTENT_UNKNOWN,
-    has_measurement_signal,
     intent_router,
 )
+from clothing_rag_demo.agent.state import AgentState
+from clothing_rag_demo.agent.tool_registry import (
+    build_default_tool_registry,
+    execute_tool_spec,
+    find_tool,
+)
+from clothing_rag_demo.agent.tracing import persist_trace_if_enabled
 from clothing_rag_demo.rag import get_chat_model
 from clothing_rag_demo.tools.memory_tool import run_memory_tool
-from clothing_rag_demo.tools.policy_tool import run_policy_tool
-from clothing_rag_demo.tools.rag_tool import run_rag_tool
-from clothing_rag_demo.tools.size_tool import run_size_tool
-
-
-RAG_FIRST_INTENTS = {
-    INTENT_PRODUCT_QA,
-    INTENT_RECOMMENDATION,
-    INTENT_INVENTORY_CHECK,
-}
-
-PRODUCT_CONTEXT_WORDS = ["这件", "衣服", "商品", "T恤", "外套", "适合", "面料", "材质"]
-SIZE_CONTEXT_WORDS = ["尺码", "码", "紧", "大", "小", "宽松", "合身", "适合我", "穿"]
 
 
 def contains_any(text, keywords):
     return any(keyword in text for keyword in keywords)
-
-
-def should_call_rag_tool(user_query, intent_result):
-    intent = intent_result["intent"]
-
-    if intent in RAG_FIRST_INTENTS:
-        return True
-
-    # 尺码问题如果提到“这件衣服/商品属性”，先查商品知识，再补尺码工具。
-    return intent == INTENT_SIZE_RECOMMENDATION and contains_any(user_query, PRODUCT_CONTEXT_WORDS)
-
-
-def should_call_size_tool(user_query, intent_result, memory_result):
-    intent = intent_result["intent"]
-    used_history = memory_result["used_history"]
-
-    if intent == INTENT_SIZE_RECOMMENDATION:
-        return True
-
-    if has_measurement_signal(user_query):
-        return True
-
-    if used_history.get("measurements_query") and contains_any(user_query, SIZE_CONTEXT_WORDS):
-        return True
-
-    return False
 
 
 def build_agent_query(user_query, memory_result):
@@ -139,6 +102,15 @@ def generate_final_answer(user_query, intent_result, memory_result, tool_results
     return response.content, final_prompt
 
 
+def default_answer_generator(state):
+    return generate_final_answer(
+        state.user_query,
+        state.intent_result,
+        state.memory_result,
+        state.tool_results,
+    )
+
+
 def build_direct_answer(user_query, intent_result):
     if intent_result["intent"] == INTENT_CHAT:
         return "我是服装导购助手，可以帮你做尺码推荐、颜色搭配、洗涤养护和基础商品咨询。"
@@ -149,66 +121,125 @@ def build_direct_answer(user_query, intent_result):
     return None
 
 
-def run_agent(user_query, chat_history=None):
-    chat_history = chat_history or []
-    intent_result = intent_router(user_query)
-    memory_result = run_memory_tool(user_query, chat_history, intent_result=intent_result)
-    selected_tools = []
-    tool_results = {}
-    agent_query = build_agent_query(user_query, memory_result)
-
-    direct_answer = build_direct_answer(user_query, intent_result)
-
-    if direct_answer:
-        final_prompt = "direct_answer，不调用大模型。"
-        return build_agent_response(
-            direct_answer,
-            user_query,
-            intent_result,
-            selected_tools,
-            memory_result,
-            tool_results,
-            final_prompt,
-        )
-
-    if intent_result["intent"] == INTENT_POLICY_QA:
-        selected_tools.append("policy_tool")
-        tool_results["policy_tool"] = run_policy_tool(agent_query)
-
-        if not tool_results["policy_tool"]["has_policy_source"]:
-            return build_agent_response(
-                tool_results["policy_tool"]["policy_answer"],
-                user_query,
-                intent_result,
-                selected_tools,
-                memory_result,
-                tool_results,
-                "policy_tool 无政策来源，直接兜底。",
-            )
-
-    if should_call_rag_tool(user_query, intent_result):
-        selected_tools.append("rag_tool")
-        tool_results["rag_tool"] = run_rag_tool(
-            agent_query,
-            query_type=intent_result["query_type"],
-        )
-
-    if should_call_size_tool(user_query, intent_result, memory_result):
-        selected_tools.append("size_tool")
-        tool_results["size_tool"] = run_size_tool(user_query, chat_history=chat_history)
-
-    if not selected_tools:
-        selected_tools.append("rag_tool")
-        tool_results["rag_tool"] = run_rag_tool(agent_query, query_type=intent_result["query_type"])
-
-    answer, final_prompt = generate_final_answer(
-        user_query,
-        intent_result,
-        memory_result,
-        tool_results,
+def route_intent(state):
+    state.intent_result = intent_router(state.user_query)
+    state.add_trace(
+        "route_intent",
+        intent=state.intent_result["intent"],
+        query_type=state.intent_result["query_type"],
+        need_history=state.intent_result["need_history"],
     )
 
+
+def resolve_memory(state):
+    state.memory_result = run_memory_tool(
+        state.user_query,
+        state.chat_history,
+        intent_result=state.intent_result,
+    )
+    state.agent_query = build_agent_query(state.user_query, state.memory_result)
+    state.add_trace(
+        "resolve_memory",
+        need_history=state.memory_result["need_history"],
+        ignored_history_reason=state.memory_result["ignored_history_reason"],
+    )
+
+
+def apply_direct_answer_gate(state):
+    direct_answer = build_direct_answer(state.user_query, state.intent_result)
+
+    if not direct_answer:
+        return False
+
+    state.answer = direct_answer
+    state.final_prompt = "direct_answer，不调用大模型。"
+    state.stop_reason = "direct_answer"
+    state.add_trace("direct_answer", intent=state.intent_result["intent"])
+    return True
+
+
+def execute_matching_tools(state, tool_registry):
+    for tool in tool_registry:
+        if tool.should_run(state):
+            execute_tool_spec(state, tool)
+
+
+def apply_policy_fallback_gate(state):
+    policy_result = state.tool_results.get("policy_tool")
+
+    if not policy_result:
+        return False
+
+    if policy_result["has_policy_source"]:
+        return False
+
+    state.answer = policy_result["policy_answer"]
+    state.final_prompt = "policy_tool 无政策来源，直接兜底。"
+    state.stop_reason = "policy_fallback"
+    state.add_trace("policy_fallback", reason=policy_result.get("reason"))
+    return True
+
+
+def apply_fallback_rag_tool(state, tool_registry):
+    if state.selected_tools:
+        return
+
+    rag_tool = find_tool(tool_registry, "rag_tool")
+
+    if not rag_tool:
+        return
+
+    state.add_trace("fallback_tool", tool="rag_tool")
+    execute_tool_spec(state, rag_tool)
+
+
+def generate_pipeline_answer(state, answer_generator):
+    state.answer, state.final_prompt = answer_generator(state)
+    state.stop_reason = "final_answer"
+    state.add_trace("answer_generated", stop_reason=state.stop_reason)
+
+
+def build_response_from_state(state):
+    persist_trace_if_enabled(state)
     return build_agent_response(
+        state.answer,
+        state.user_query,
+        state.intent_result,
+        state.selected_tools,
+        state.memory_result,
+        state.tool_results,
+        state.final_prompt,
+        stop_reason=state.stop_reason,
+        trace_events=state.trace_events,
+    )
+
+
+def run_agent(user_query, chat_history=None, tool_registry=None, answer_generator=None):
+    state = AgentState(
+        user_query=user_query,
+        chat_history=chat_history or [],
+    )
+    registry = tool_registry or build_default_tool_registry()
+    answer_generator = answer_generator or default_answer_generator
+
+    route_intent(state)
+    resolve_memory(state)
+
+    if apply_direct_answer_gate(state):
+        return build_response_from_state(state)
+
+    execute_matching_tools(state, registry)
+
+    if apply_policy_fallback_gate(state):
+        return build_response_from_state(state)
+
+    apply_fallback_rag_tool(state, registry)
+    generate_pipeline_answer(state, answer_generator)
+
+    return build_response_from_state(state)
+
+
+def build_agent_response(
         answer,
         user_query,
         intent_result,
@@ -216,17 +247,8 @@ def run_agent(user_query, chat_history=None):
         memory_result,
         tool_results,
         final_prompt,
-    )
-
-
-def build_agent_response(
-    answer,
-    user_query,
-    intent_result,
-    selected_tools,
-    memory_result,
-    tool_results,
-    final_prompt,
+        stop_reason=None,
+        trace_events=None,
 ):
     rag_result = tool_results.get("rag_tool") or {}
 
@@ -242,6 +264,8 @@ def build_agent_response(
             "retrieved_chunks": rag_result.get("retrieved_chunks", []),
             "tool_results": tool_results,
             "final_prompt": final_prompt,
+            "stop_reason": stop_reason,
+            "trace_events": trace_events or [],
         },
     }
 
