@@ -1,8 +1,8 @@
 import os
-import tempfile
 import unittest
 from pathlib import Path
 
+from clothing_rag_demo.config_data import BASE_DIR
 from clothing_rag_demo.agent.agent_executor import run_agent
 from clothing_rag_demo.agent.state import AgentState
 from clothing_rag_demo.agent.tool_registry import (
@@ -129,24 +129,26 @@ class AgentPipelineTests(unittest.TestCase):
         state.stop_reason = "direct_answer"
         state.add_trace("direct_answer", intent="chat")
 
-        with tempfile.TemporaryDirectory() as trace_dir:
-            old_enabled = os.environ.get("AGENT_TRACE_TO_FILE")
-            old_dir = os.environ.get("AGENT_TRACE_DIR")
-            os.environ["AGENT_TRACE_TO_FILE"] = "true"
-            os.environ["AGENT_TRACE_DIR"] = trace_dir
-            try:
-                trace_path = persist_trace_if_enabled(state)
-                trace_content = Path(trace_path).read_text(encoding="utf-8")
-            finally:
-                if old_enabled is None:
-                    os.environ.pop("AGENT_TRACE_TO_FILE", None)
-                else:
-                    os.environ["AGENT_TRACE_TO_FILE"] = old_enabled
+        trace_dir = BASE_DIR.parent / ".test_tmp" / "trace_test"
+        trace_dir.mkdir(parents=True, exist_ok=True)
 
-                if old_dir is None:
-                    os.environ.pop("AGENT_TRACE_DIR", None)
-                else:
-                    os.environ["AGENT_TRACE_DIR"] = old_dir
+        old_enabled = os.environ.get("AGENT_TRACE_TO_FILE")
+        old_dir = os.environ.get("AGENT_TRACE_DIR")
+        os.environ["AGENT_TRACE_TO_FILE"] = "true"
+        os.environ["AGENT_TRACE_DIR"] = str(trace_dir)
+        try:
+            trace_path = persist_trace_if_enabled(state)
+            trace_content = Path(trace_path).read_text(encoding="utf-8")
+        finally:
+            if old_enabled is None:
+                os.environ.pop("AGENT_TRACE_TO_FILE", None)
+            else:
+                os.environ["AGENT_TRACE_TO_FILE"] = old_enabled
+
+            if old_dir is None:
+                os.environ.pop("AGENT_TRACE_DIR", None)
+            else:
+                os.environ["AGENT_TRACE_DIR"] = old_dir
 
         self.assertIsNotNone(trace_path)
         self.assertTrue(Path(trace_path).name.endswith(".jsonl"))

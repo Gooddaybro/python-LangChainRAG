@@ -26,6 +26,12 @@ streamlit run clothing_rag_demo/app_file_uploader.py
 streamlit run clothing_rag_demo/app_qa.py
 ```
 
+## Agent Executors
+
+当前主线入口仍是 `clothing_rag_demo.agent.agent_executor.run_agent`。
+项目还提供 LangGraph 影子入口 `clothing_rag_demo.agent.langgraph_executor.run_langgraph_agent`，
+用于验证现有 pipeline 能否迁移到 LangGraph，不默认接入 Streamlit。
+
 ## Test
 
 ```powershell

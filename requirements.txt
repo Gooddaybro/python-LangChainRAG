@@ -3,3 +3,4 @@ requests
 langchain-core
 langchain-community
 dashscope
+langgraph
