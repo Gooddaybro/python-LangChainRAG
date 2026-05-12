@@ -1,3 +1,9 @@
+"""工具注册表。
+
+这里把“什么时候能用某个工具”和“怎么调用这个工具”集中声明。
+Learning: 这是从 if/else 调度走向 LangGraph Tool Node 的过渡层。
+"""
+
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -14,11 +20,11 @@ from clothing_rag_demo.tools.policy_tool import run_policy_tool
 from clothing_rag_demo.tools.rag_tool import run_rag_tool
 from clothing_rag_demo.tools.size_tool import run_size_tool
 
-# 加工数据，定义什么工具能干什么
-
+# ToolRunner 负责执行工具；ToolPredicate 负责判断当前 State 是否需要这个工具。
 ToolRunner = Callable[[AgentState], dict[str, Any]]
 ToolPredicate = Callable[[AgentState], bool]
 
+# 这些意图优先依赖商品知识库，所以默认先走 RAG。
 RAG_FIRST_INTENTS = {
     INTENT_PRODUCT_QA,
     INTENT_RECOMMENDATION,
@@ -30,6 +36,11 @@ SIZE_CONTEXT_WORDS = ["尺码", "码", "紧", "大", "小", "宽松", "合身", 
 
 @dataclass(frozen=True)
 class ToolSpec:
+    """一个工具的声明式说明。
+
+    name/result_key 用于追踪和写回 State，should_run/run 则把选择和执行分开。
+    """
+
     name: str
     result_key: str
     should_run: ToolPredicate
@@ -67,6 +78,8 @@ def should_run_size_tool(state):
     if has_measurement_signal(state.user_query):
         return True
 
+    # 用户追问“宽松一点”时，当前句子可能没有身高体重；
+    # 如果 memory_tool 找到了历史尺码问题，这里仍然允许调用尺码工具。
     if used_history.get("measurements_query") and contains_any(state.user_query, SIZE_CONTEXT_WORDS):
         return True
 
@@ -78,6 +91,11 @@ def build_default_tool_registry(
     rag_runner=run_rag_tool,
     size_runner=run_size_tool,
 ):
+    """构建默认工具表。
+
+    runner 参数支持测试注入 fake tools，避免评测时依赖真实向量库或大模型。
+    """
+
     def run_policy(state):
         return policy_runner(state.agent_query)
 
@@ -128,6 +146,7 @@ def find_tool(registry, name):
 
 
 def summarize_tool_result(result):
+    """把工具结果压缩成 trace 友好的摘要，避免 debug log 过长。"""
     if not isinstance(result, dict):
         return {"type": type(result).__name__}
 
@@ -144,6 +163,7 @@ def summarize_tool_result(result):
 
 
 def execute_tool_spec(state, tool):
+    """执行一个 ToolSpec，并把选择记录、结果和 trace 写回 AgentState。"""
     state.selected_tools.append(tool.name)
     state.add_trace("tool_selected", tool=tool.name)
     result = tool.run(state)

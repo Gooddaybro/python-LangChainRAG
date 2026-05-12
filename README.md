@@ -39,6 +39,14 @@ python -m unittest discover -v
 python -m compileall -q clothing_rag_demo tests
 ```
 
+## Eval Report
+
+生成主线 Agent 和 LangGraph shadow 的确定性评测对比表：
+
+```powershell
+python -m clothing_rag_demo.agent.eval_report
+```
+
 ## Local Agent Trace
 
 Agent debug trace is always returned in `result["debug"]["trace_events"]`.

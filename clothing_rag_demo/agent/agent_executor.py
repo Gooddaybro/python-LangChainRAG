@@ -1,3 +1,9 @@
+"""手写 MVP Agent 执行器。
+
+这个模块是当前主线 pipeline：按固定顺序完成路由、记忆、工具、兜底和生成。
+LangGraph shadow 现在复用这里的节点函数，用来证明图版本和主线行为一致。
+"""
+
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from clothing_rag_demo.agent.router import (
@@ -16,13 +22,16 @@ from clothing_rag_demo.agent.tracing import persist_trace_if_enabled
 from clothing_rag_demo.rag import get_chat_model
 from clothing_rag_demo.tools.memory_tool import run_memory_tool
 
-# pipeline 调度转动
-
 def contains_any(text, keywords):
     return any(keyword in text for keyword in keywords)
 
 
 def build_agent_query(user_query, memory_result):
+    """决定工具实际检索用的问题。
+
+    如果当前问题依赖历史，就用 memory_tool 改写后的 memory_query；
+    否则直接使用用户原始问题。
+    """
     if memory_result["need_history"]:
         return memory_result["memory_query"]
 
@@ -30,6 +39,7 @@ def build_agent_query(user_query, memory_result):
 
 
 def format_chunks(chunks):
+    """把 RAG chunk 转成最终 prompt 可读的中文资料块。"""
     if not chunks:
         return "无可用知识库资料。"
 
@@ -50,6 +60,11 @@ def format_chunks(chunks):
 
 
 def build_final_prompt(user_query, intent_result, memory_result, tool_results):
+    """组装最终给大模型的上下文。
+
+    Learning: 当前 MVP 还没有按意图切换 system prompt，所以这里先把
+    RAG、尺码、政策三个工具结果统一塞进同一个 prompt。
+    """
     rag_result = tool_results.get("rag_tool")
     size_result = tool_results.get("size_tool")
     policy_result = tool_results.get("policy_tool")
@@ -92,6 +107,7 @@ RAG 检索资料：
 
 
 def generate_final_answer(user_query, intent_result, memory_result, tool_results):
+    """调用真实聊天模型生成最终回答。测试里会用 fake answer_generator 替代它。"""
     final_prompt = build_final_prompt(user_query, intent_result, memory_result, tool_results)
     chat_model = get_chat_model()
     messages = [
@@ -113,6 +129,10 @@ def default_answer_generator(state):
 
 
 def build_direct_answer(user_query, intent_result):
+    """不需要工具和大模型时直接回答。
+
+    这是一道早停门：闲聊、无法识别的问题不应该继续消耗 RAG 或 LLM。
+    """
     if intent_result["intent"] == INTENT_CHAT:
         return "我是服装导购助手，可以帮你做尺码推荐、颜色搭配、洗涤养护和基础商品咨询。"
 
@@ -123,6 +143,7 @@ def build_direct_answer(user_query, intent_result):
 
 
 def route_intent(state):
+    """Pipeline 阶段 1：识别意图并写入 State。"""
     state.intent_result = intent_router(state.user_query)
     state.add_trace(
         "route_intent",
@@ -133,6 +154,7 @@ def route_intent(state):
 
 
 def resolve_memory(state):
+    """Pipeline 阶段 2：判断当前问题是否需要历史上下文。"""
     state.memory_result = run_memory_tool(
         state.user_query,
         state.chat_history,
@@ -147,6 +169,7 @@ def resolve_memory(state):
 
 
 def apply_direct_answer_gate(state):
+    """Pipeline 阶段 3：能直接回答就短路，避免不必要的工具调用。"""
     direct_answer = build_direct_answer(state.user_query, state.intent_result)
 
     if not direct_answer:
@@ -160,12 +183,18 @@ def apply_direct_answer_gate(state):
 
 
 def execute_matching_tools(state, tool_registry):
+    """Pipeline 阶段 4：让 ToolRegistry 根据 State 选择并执行工具。"""
     for tool in tool_registry:
         if tool.should_run(state):
             execute_tool_spec(state, tool)
 
 
 def apply_policy_fallback_gate(state):
+    """政策类问题的安全兜底。
+
+    如果知识库没有政策来源，直接返回 policy_tool 的兜底回答，
+    避免大模型编造退换货、物流或售后规则。
+    """
     policy_result = state.tool_results.get("policy_tool")
 
     if not policy_result:
@@ -182,6 +211,10 @@ def apply_policy_fallback_gate(state):
 
 
 def apply_fallback_rag_tool(state, tool_registry):
+    """最后一道工具兜底。
+
+    如果 Router/Registry 没选中任何工具，仍尝试 RAG，保证商品类问题尽量有资料依据。
+    """
     if state.selected_tools:
         return
 
@@ -195,12 +228,14 @@ def apply_fallback_rag_tool(state, tool_registry):
 
 
 def generate_pipeline_answer(state, answer_generator):
+    """Pipeline 阶段 5：把 State 中的工具结果交给回答生成器。"""
     state.answer, state.final_prompt = answer_generator(state)
     state.stop_reason = "final_answer"
     state.add_trace("answer_generated", stop_reason=state.stop_reason)
 
 
 def build_response_from_state(state):
+    """把内部 State 转成外部调用方稳定使用的 response/debug 结构。"""
     persist_trace_if_enabled(state)
     return build_agent_response(
         state.answer,
@@ -216,6 +251,11 @@ def build_response_from_state(state):
 
 
 def run_agent(user_query, chat_history=None, tool_registry=None, answer_generator=None):
+    """运行当前主线手写 Agent。
+
+    Learning: 这条线还是单个 Agent 的固定 pipeline；LangGraph 只是 shadow 对照，
+    还没有成为生产主入口。
+    """
     state = AgentState(
         user_query=user_query,
         chat_history=chat_history or [],
@@ -223,6 +263,7 @@ def run_agent(user_query, chat_history=None, tool_registry=None, answer_generato
     registry = tool_registry or build_default_tool_registry()
     answer_generator = answer_generator or default_answer_generator
 
+    # 固定顺序执行让 MVP 更容易理解和测试；后续 LangGraph 会把这些阶段变成节点和边。
     route_intent(state)
     resolve_memory(state)
 
@@ -251,6 +292,10 @@ def build_agent_response(
         stop_reason=None,
         trace_events=None,
 ):
+    """统一 Agent 输出契约。
+
+    answer 是用户可见内容；debug 是学习、测试和 eval report 用的内部证据。
+    """
     rag_result = tool_results.get("rag_tool") or {}
 
     return {

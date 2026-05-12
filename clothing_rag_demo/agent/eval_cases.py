@@ -1,3 +1,9 @@
+"""固定评测用例。
+
+这些 case 是 Agent 的最低行为契约：路由要识别什么意图、该选哪些工具、
+什么时候必须兜底、什么时候必须命中 RAG。
+"""
+
 from clothing_rag_demo.agent.router import (
     INTENT_CHAT,
     INTENT_INVENTORY_CHECK,
@@ -9,6 +15,7 @@ from clothing_rag_demo.agent.router import (
 )
 
 
+# 追问类尺码问题需要历史上下文，所以这里准备一段稳定的历史输入。
 SIZE_HISTORY = [
     {
         "user_query": "我身高168，体重65kg，想买一件日常穿的T恤",
@@ -17,6 +24,8 @@ SIZE_HISTORY = [
 ]
 
 
+# Learning: 这里不是测试“回答写得好不好”，而是测试 Agent 调度是否走对路。
+# 语义质量评测以后可以单独加，不要和路由/工具选择评测混在一起。
 EVAL_CASES = [
     {
         "name": "chat_identity",

@@ -1,6 +1,12 @@
+"""规则版意图路由器。
+
+这个模块像 pipeline 的“分拣员”：先判断用户问题属于哪类意图，
+后面的 ToolRegistry 再根据这个意图决定该不该调用具体工具。
+"""
+
 import re
 
-# 流水线分拣员，该不该触发某个tool？ 也就是说属于pipeline的分叉点
+# MVP 阶段先用固定意图字符串，保证测试和评测报告可以稳定断言。
 INTENT_SIZE_RECOMMENDATION = "size_recommendation"
 INTENT_PRODUCT_QA = "product_qa"
 INTENT_POLICY_QA = "policy_qa"
@@ -127,6 +133,7 @@ def needs_history(user_query):
 
 
 def build_router_result(intent, query_type, need_history, reason):
+    """统一 Router 输出结构，避免后续节点到处猜字段名。"""
     return {
         "intent": intent,
         "need_history": need_history,
@@ -140,6 +147,8 @@ def intent_router(user_query):
     normalized_query = normalize_query(user_query)
     need_history = needs_history(user_query)
 
+    # 路由顺序本身就是业务规则：闲聊和政策先短路，尺码优先识别强信号。
+    # Learning: 以后如果换成 LLM Router，这些顺序要转成 prompt 或结构化评测。
     if not normalized_query:
         return build_router_result(
             INTENT_UNKNOWN,
