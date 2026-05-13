@@ -6,6 +6,9 @@ from clothing_rag_demo.config_data import DATA_DIR, SIZE_KNOWLEDGE_FILE
 _SIZE_RULE_CACHE = None
 _SIZE_RULE_CACHE_VERSION = None
 
+SIZE_ORDER = ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"]
+MAX_MIXED_SIZE_GAP = 1
+
 
 def extract_user_measurements(user_query):
     height_match = re.search(
@@ -157,6 +160,41 @@ def find_rule_by_size(size_rules, size):
     return None
 
 
+def get_size_index(size):
+    if size not in SIZE_ORDER:
+        return None
+
+    return SIZE_ORDER.index(size)
+
+
+def calculate_size_gap(first_size, second_size):
+    first_index = get_size_index(first_size)
+    second_index = get_size_index(second_size)
+
+    if first_index is None or second_index is None:
+        return None
+
+    return abs(first_index - second_index)
+
+
+def choose_closest_mixed_rules(height_matched_rules, weight_matched_rules):
+    scored_pairs = []
+
+    for height_rule in height_matched_rules:
+        for weight_rule in weight_matched_rules:
+            size_gap = calculate_size_gap(height_rule["size"], weight_rule["size"])
+
+            if size_gap is not None:
+                scored_pairs.append((size_gap, height_rule, weight_rule))
+
+    if not scored_pairs:
+        return height_matched_rules[0], weight_matched_rules[0], None
+
+    scored_pairs.sort(key=lambda item: item[0])
+    size_gap, height_rule, weight_rule = scored_pairs[0]
+    return height_rule, weight_rule, size_gap
+
+
 def build_size_result(match_type, primary_rule, measurements, reason, alternative_rule=None):
     return {
         "matched": primary_rule is not None,
@@ -247,8 +285,25 @@ def match_size_rule(user_query):
             )
 
     if height_matched_rules and weight_matched_rules:
-        primary_rule = height_matched_rules[0]
-        alternative_rule = weight_matched_rules[0]
+        primary_rule, alternative_rule, size_gap = choose_closest_mixed_rules(
+            height_matched_rules,
+            weight_matched_rules,
+        )
+
+        if size_gap is not None and size_gap > MAX_MIXED_SIZE_GAP:
+            reason = (
+                f"身高更接近 {primary_rule['size']} 码区间，"
+                f"体重更接近 {alternative_rule['size']} 码区间，"
+                "两个尺码区间差距较大。当前尺码表无法给出单一可靠尺码，"
+                "建议补充胸围、肩宽、衣长或试穿确认。"
+            )
+            return build_size_result(
+                "measurement_conflict",
+                None,
+                measurements,
+                reason,
+            )
+
         reason = (
             f"身高更接近 {primary_rule['size']} 码区间，"
             f"体重更接近 {alternative_rule['size']} 码区间，"

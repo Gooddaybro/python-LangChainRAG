@@ -1,6 +1,6 @@
 import unittest
 
-from clothing_rag_demo.agent.agent_executor import build_agent_query
+from clothing_rag_demo.agent.agent_executor import build_agent_query, build_final_prompt
 from clothing_rag_demo.agent.router import (
     INTENT_POLICY_QA,
     INTENT_SIZE_RECOMMENDATION,
@@ -47,6 +47,51 @@ class AgentMvpTests(unittest.TestCase):
         self.assertIn("身高168", size_query)
         self.assertEqual(result["recommended_size"], "L")
         self.assertEqual(result["alternative"], "XL")
+
+    def test_size_tool_rejects_large_short_height_high_weight_conflict(self):
+        result = run_size_tool("我身高158，体重75kg，想买一件日常穿的T恤")
+
+        self.assertEqual(result["match_type"], "measurement_conflict")
+        self.assertIsNone(result["recommended_size"])
+        self.assertIsNone(result["alternative"])
+        self.assertIn("S", result["reason"])
+        self.assertIn("XL", result["reason"])
+        self.assertIn("无法给出单一可靠尺码", result["reason"])
+
+    def test_size_tool_rejects_large_tall_height_low_weight_conflict(self):
+        result = run_size_tool("我身高188，体重65kg，想买一件日常穿的T恤")
+
+        self.assertEqual(result["match_type"], "measurement_conflict")
+        self.assertIsNone(result["recommended_size"])
+        self.assertIsNone(result["alternative"])
+        self.assertIn("4XL", result["reason"])
+        self.assertIn("XL", result["reason"])
+        self.assertIn("无法给出单一可靠尺码", result["reason"])
+
+    def test_size_tool_keeps_adjacent_mixed_recommendation(self):
+        result = run_size_tool("我身高160，体重60kg，想买一件日常穿的T恤")
+
+        self.assertEqual(result["match_type"], "mixed")
+        self.assertEqual(result["recommended_size"], "M")
+        self.assertEqual(result["alternative"], "L")
+
+    def test_final_prompt_tells_model_not_to_recommend_conflicting_sizes(self):
+        prompt = build_final_prompt(
+            "我身高158，体重75kg，推荐什么尺码？",
+            {"intent": INTENT_SIZE_RECOMMENDATION},
+            {"used_history": {}},
+            {
+                "size_tool": {
+                    "match_type": "measurement_conflict",
+                    "recommended_size": None,
+                    "alternative": None,
+                    "reason": "当前尺码表无法给出单一可靠尺码。",
+                }
+            },
+        )
+
+        self.assertIn("measurement_conflict", prompt)
+        self.assertIn("不要输出两个跨度很大的尺码作为推荐", prompt)
 
     def test_no_policy_source_result_is_explicit_fallback(self):
         rag_result = {
