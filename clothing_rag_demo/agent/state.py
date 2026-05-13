@@ -19,6 +19,9 @@ class AgentState:
     memory_result: dict[str, Any] | None = None
     agent_query: str | None = None
     selected_tools: list[str] = field(default_factory=list)
+    # Learning: selected_tools 记录“调了哪些工具”，tool_call_count 记录“工具节点实际跑了几次”。
+    # 后续 LangGraph 加入重试/循环时，这个计数就是最小的死循环保护器。
+    tool_call_count: int = 0
     tool_results: dict[str, Any] = field(default_factory=dict)
 
     # 输出侧：answer 给用户看，final_prompt 和 stop_reason 给调试/评测看。

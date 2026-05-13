@@ -247,6 +247,7 @@ def build_response_from_state(state):
         state.tool_results,
         state.final_prompt,
         stop_reason=state.stop_reason,
+        tool_call_count=state.tool_call_count,
         trace_events=state.trace_events,
     )
 
@@ -291,6 +292,7 @@ def build_agent_response(
         tool_results,
         final_prompt,
         stop_reason=None,
+        tool_call_count=0,
         trace_events=None,
 ):
     """统一 Agent 输出契约。
@@ -310,6 +312,7 @@ def build_agent_response(
             "retrieval_query": rag_result.get("retrieval_query"),
             "retrieved_chunks": rag_result.get("retrieved_chunks", []),
             "tool_results": tool_results,
+            "tool_call_count": tool_call_count,
             "final_prompt": final_prompt,
             "stop_reason": stop_reason,
             "trace_events": trace_events or [],

@@ -1,7 +1,15 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from clothing_rag_demo.agent.eval_cases import EVAL_CASES
-from clothing_rag_demo.agent.eval_report import build_eval_report, format_markdown_report
+from clothing_rag_demo.agent.eval_report import (
+    build_eval_report,
+    format_json_report,
+    format_markdown_report,
+    write_report,
+)
 
 
 class EvalReportTests(unittest.TestCase):
@@ -26,6 +34,46 @@ class EvalReportTests(unittest.TestCase):
         self.assertIn("Executor Consistency", markdown)
         self.assertIn("pipeline", markdown)
         self.assertIn("langgraph", markdown)
+
+    def test_format_json_report_is_parseable_and_keeps_chinese(self):
+        report = {
+            "summary": {"case_count": 1},
+            "rows": [{"case": "中文_case"}],
+            "consistency_rows": [],
+        }
+
+        json_text = format_json_report(report)
+        parsed = json.loads(json_text)
+
+        self.assertEqual(parsed["rows"][0]["case"], "中文_case")
+        self.assertIn("中文_case", json_text)
+
+    def test_write_report_creates_markdown_output_parent_directory(self):
+        report = build_eval_report()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "nested" / "eval-report.md"
+
+            written_path = write_report(report, "markdown", output_path)
+
+            self.assertEqual(written_path, output_path)
+            self.assertTrue(output_path.exists())
+            self.assertIn("# Agent Eval Report", output_path.read_text(encoding="utf-8"))
+
+    def test_write_report_creates_json_output(self):
+        report = {
+            "summary": {"case_count": 1},
+            "rows": [{"case": "中文_case"}],
+            "consistency_rows": [],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "eval-report.json"
+
+            write_report(report, "json", output_path)
+
+            parsed = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(parsed["rows"][0]["case"], "中文_case")
 
 
 if __name__ == "__main__":

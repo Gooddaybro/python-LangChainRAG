@@ -4,7 +4,10 @@
 用表格检查两条路径的意图、工具、停止原因和 RAG 命中是否一致。
 """
 
+import argparse
+import json
 from collections import defaultdict
+from pathlib import Path
 
 from clothing_rag_demo.agent.agent_executor import run_agent
 from clothing_rag_demo.agent.eval_cases import EVAL_CASES
@@ -263,8 +266,53 @@ def format_markdown_report(report):
     return "\n".join(lines)
 
 
-def main():
-    print(format_markdown_report(build_eval_report()))
+def format_json_report(report):
+    return json.dumps(report, ensure_ascii=False, indent=2)
+
+
+def format_report(report, output_format):
+    if output_format == "markdown":
+        return format_markdown_report(report)
+
+    if output_format == "json":
+        return format_json_report(report)
+
+    raise ValueError(f"Unsupported report format: {output_format}")
+
+
+def write_report(report, output_format, output_path):
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rendered_report = format_report(report, output_format)
+    path.write_text(rendered_report, encoding="utf-8")
+    return path
+
+
+def build_arg_parser():
+    parser = argparse.ArgumentParser(description="Generate deterministic Agent eval report.")
+    parser.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Report output format. Defaults to markdown.",
+    )
+    parser.add_argument(
+        "--output",
+        help="Optional output path. When omitted, the report is printed to stdout.",
+    )
+    return parser
+
+
+def main(argv=None):
+    args = build_arg_parser().parse_args(argv)
+    report = build_eval_report()
+
+    if args.output:
+        output_path = write_report(report, args.format, args.output)
+        print(f"Report written to {output_path}")
+        return
+
+    print(format_report(report, args.format))
 
 
 if __name__ == "__main__":

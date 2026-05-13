@@ -99,6 +99,7 @@ class AgentPipelineTests(unittest.TestCase):
 
         self.assertEqual(result["answer"], "fake answer")
         self.assertEqual(result["debug"]["selected_tools"], ["rag_tool"])
+        self.assertEqual(result["debug"]["tool_call_count"], 1)
         self.assertEqual(result["debug"]["stop_reason"], "final_answer")
         self.assertIn("trace_events", result["debug"])
         self.assertIn("tool_result", [event["step"] for event in result["debug"]["trace_events"]])

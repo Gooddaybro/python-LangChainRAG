@@ -165,7 +165,8 @@ def summarize_tool_result(result):
 def execute_tool_spec(state, tool):
     """执行一个 ToolSpec，并把选择记录、结果和 trace 写回 AgentState。"""
     state.selected_tools.append(tool.name)
-    state.add_trace("tool_selected", tool=tool.name)
+    state.tool_call_count += 1
+    state.add_trace("tool_selected", tool=tool.name, tool_call_count=state.tool_call_count)
     result = tool.run(state)
     state.tool_results[tool.result_key] = result
     state.add_trace("tool_result", tool=tool.name, result_summary=summarize_tool_result(result))

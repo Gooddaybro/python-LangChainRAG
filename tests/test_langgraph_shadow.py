@@ -90,6 +90,29 @@ class LangGraphShadowTests(unittest.TestCase):
         self.assertEqual(result["debug"]["stop_reason"], "final_answer")
         self.assertGreater(len(result["debug"]["retrieved_chunks"]), 0)
 
+    def test_langgraph_records_tool_call_count(self):
+        result = run_langgraph_agent(
+            "我身高175cm，体重70kg，这件T恤适合我吗？",
+            tool_registry=build_fake_registry(),
+            answer_generator=fake_answer_generator,
+        )
+
+        self.assertEqual(result["debug"]["selected_tools"], ["rag_tool", "size_tool"])
+        self.assertEqual(result["debug"]["tool_call_count"], 2)
+
+    def test_tool_budget_zero_stops_before_tools(self):
+        result = run_langgraph_agent(
+            "这件衣服适合夏天吗？",
+            tool_registry=build_fake_registry(),
+            answer_generator=fake_answer_generator,
+            max_tool_calls=0,
+        )
+
+        self.assertEqual(result["debug"]["selected_tools"], [])
+        self.assertEqual(result["debug"]["tool_call_count"], 0)
+        self.assertEqual(result["debug"]["stop_reason"], "tool_budget_exhausted")
+        self.assertIn("工具调用次数已达到上限", result["answer"])
+
     def test_eval_cases_match_expected_contracts(self):
         registry = build_fake_registry()
 
