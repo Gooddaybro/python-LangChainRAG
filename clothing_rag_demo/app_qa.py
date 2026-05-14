@@ -4,7 +4,7 @@ from requests.exceptions import RequestException
 from clothing_rag_demo.agent.agent_executor import run_agent
 from clothing_rag_demo.agent.eval_report import build_eval_report
 from clothing_rag_demo.agent.langgraph_executor import run_langgraph_agent
-from clothing_rag_demo.config_data import DEFAULT_TEST_QUERY
+from clothing_rag_demo.config_data import DEFAULT_TEST_QUERY, PROJECT_DISPLAY_NAME
 from clothing_rag_demo.file_history_store import (
     append_chat_turn,
     clear_chat_history,
@@ -39,6 +39,15 @@ def build_status_summary(execution_mode, debug):
         "stop_reason": debug.get("stop_reason", "未运行"),
         "rag_chunk_count": len(debug.get("retrieved_chunks", [])),
     }
+
+
+def build_page_hero_html():
+    return f"""
+        <div class="agent-hero">
+            <h1>{PROJECT_DISPLAY_NAME}</h1>
+            <p>Pipeline 与 LangGraph Shadow 的本地调试控制台</p>
+        </div>
+        """
 
 
 def format_tools_for_page(tools):
@@ -261,20 +270,12 @@ def render_eval_report_panel():
 
 def main():
     st.set_page_config(
-        page_title="Agent Workbench",
+        page_title=PROJECT_DISPLAY_NAME,
         layout="wide",
     )
     apply_workbench_style()
 
-    st.markdown(
-        """
-        <div class="agent-hero">
-            <h1>Agent Workbench</h1>
-            <p>Pipeline 与 LangGraph Shadow 的本地调试控制台</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown(build_page_hero_html(), unsafe_allow_html=True)
 
     if "last_agent_result" not in st.session_state:
         st.session_state["last_agent_result"] = None

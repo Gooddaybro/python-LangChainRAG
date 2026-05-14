@@ -6,7 +6,12 @@ import json
 
 import streamlit as st
 
-from clothing_rag_demo.config_data import DATA_DIR, FILE_HASH_RECORD_PATH, KNOWLEDGE_FILES
+from clothing_rag_demo.config_data import (
+    DATA_DIR,
+    FILE_HASH_RECORD_PATH,
+    KNOWLEDGE_FILES,
+    PROJECT_DISPLAY_NAME,
+)
 from clothing_rag_demo.knowledge_base import (
     build_knowledge_chunks,
     build_preview_text,
@@ -129,7 +134,11 @@ def build_chunk_preview_text(knowledge_chunks, limit=5):
     return "\n".join(preview_lines)
 
 
-st.title("知识库更新服务")
+st.set_page_config(
+    page_title=f"{PROJECT_DISPLAY_NAME} - 知识库更新服务",
+    layout="wide",
+)
+st.title(f"{PROJECT_DISPLAY_NAME} 知识库更新服务")
 st.write("管理员只能上传以下 3 个知识文件，用来更新服装知识库：")
 st.code("\n".join(KNOWLEDGE_FILES), language="text")
 

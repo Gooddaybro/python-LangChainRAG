@@ -1,0 +1,4 @@
+interface:
+  display_name: "Production RAG Agent"
+  short_description: "Build portfolio-ready RAG and LangGraph assistants"
+  default_prompt: "Use $building-production-rag-agent to upgrade this RAG assistant into a portfolio-ready application."

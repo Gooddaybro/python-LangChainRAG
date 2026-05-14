@@ -4,6 +4,8 @@ from pathlib import Path
 # 定义项目里的“路径配置”和“默认要加载哪些知识文件”。
 
 BASE_DIR = Path(__file__).resolve().parent
+PROJECT_DISPLAY_NAME = "AI Clothing Shopping Assistant System"
+PROJECT_API_TITLE = f"{PROJECT_DISPLAY_NAME} API"
 DATA_DIR = BASE_DIR / "data"
 CHAT_HISTORY_DIR = BASE_DIR / "chat_history"
 VECTOR_DB_DIR = BASE_DIR / "chroma_db"

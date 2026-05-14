@@ -1,6 +1,6 @@
-# Clothing RAG Demo
+# AI Clothing Shopping Assistant System
 
-服装知识库问答 MVP，包含两条入口：
+面向服装电商客服和导购场景的 AI 助手系统，包含 Streamlit 演示入口和 FastAPI 后端入口。
 
 - `app_file_uploader.py`：上传并重建本地知识库。
 - `app_qa.py`：普通 RAG 问答，可勾选启用导购 Agent。
@@ -25,6 +25,32 @@ streamlit run clothing_rag_demo/app_file_uploader.py
 ```powershell
 streamlit run clothing_rag_demo/app_qa.py
 ```
+
+## FastAPI Backend
+
+项目也提供 FastAPI 后端入口，适合把同一套 Agent 能力暴露给前端、App 或其他系统调用：
+
+```powershell
+uvicorn clothing_rag_demo.api.app:app --reload
+```
+
+启动后打开接口文档：
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+如果本机 `8000` 端口已经被其他服务占用，可以改用：
+
+```powershell
+uvicorn clothing_rag_demo.api.app:app --reload --port 8001
+```
+
+当前接口：
+
+- `GET /health`：健康检查。
+- `POST /chat`：调用主线 `run_agent`。
+- `POST /chat/langgraph`：调用 LangGraph shadow `run_langgraph_agent`。
 
 ## Agent Executors
 
