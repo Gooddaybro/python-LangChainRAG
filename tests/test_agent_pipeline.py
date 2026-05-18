@@ -4,7 +4,7 @@ from pathlib import Path
 
 from clothing_rag_demo.config_data import BASE_DIR
 from clothing_rag_demo.agent.agent_executor import run_agent
-from clothing_rag_demo.agent.state import AgentState
+from clothing_rag_demo.agent.state import AgentState, make_trace
 from clothing_rag_demo.agent.tool_registry import (
     build_default_tool_registry,
     matching_tool_names,
@@ -57,27 +57,27 @@ def fake_answer_generator(state):
 
 
 class AgentPipelineTests(unittest.TestCase):
-    def test_agent_state_tracks_trace_events(self):
-        state = AgentState(user_query="你是谁？")
+    def test_make_trace_creates_trace_event(self):
+        """make_trace 创建标准 trace 事件列表，供 mutate 函数返回。"""
+        events = make_trace("route_intent", intent="chat")
 
-        state.add_trace("route_intent", intent="chat")
-
-        self.assertEqual(state.user_query, "你是谁？")
-        self.assertEqual(state.selected_tools, [])
-        self.assertEqual(state.trace_events[0]["step"], "route_intent")
-        self.assertEqual(state.trace_events[0]["data"]["intent"], "chat")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["step"], "route_intent")
+        self.assertEqual(events[0]["data"]["intent"], "chat")
 
     def test_tool_registry_selects_size_and_rag_for_product_size_question(self):
-        state = AgentState(user_query="我身高175cm，体重70kg，这件T恤适合我吗？")
-        state.intent_result = {
-            "intent": "size_recommendation",
-            "query_type": "size",
-            "need_history": False,
-            "reason": "test",
-        }
-        state.memory_result = {
-            "used_history": {},
-            "need_history": False,
+        state: AgentState = {
+            "user_query": "我身高175cm，体重70kg，这件T恤适合我吗？",
+            "intent_result": {
+                "intent": "size_recommendation",
+                "query_type": "size",
+                "need_history": False,
+                "reason": "test",
+            },
+            "memory_result": {
+                "used_history": {},
+                "need_history": False,
+            },
         }
 
         registry = build_default_tool_registry()
@@ -125,10 +125,14 @@ class AgentPipelineTests(unittest.TestCase):
         self.assertIn("当前知识库没有退换货", result["answer"])
 
     def test_trace_persistence_is_opt_in(self):
-        state = AgentState(user_query="你是谁？")
-        state.answer = "我是服装导购助手。"
-        state.stop_reason = "direct_answer"
-        state.add_trace("direct_answer", intent="chat")
+        state: AgentState = {
+            "user_query": "你是谁？",
+            "answer": "我是服装导购助手。",
+            "stop_reason": "direct_answer",
+            "selected_tools": [],
+            "tool_call_count": 0,
+        }
+        trace_events = make_trace("direct_answer", intent="chat")
 
         trace_dir = BASE_DIR.parent / ".test_tmp" / "trace_test"
         trace_dir.mkdir(parents=True, exist_ok=True)
@@ -138,7 +142,7 @@ class AgentPipelineTests(unittest.TestCase):
         os.environ["AGENT_TRACE_TO_FILE"] = "true"
         os.environ["AGENT_TRACE_DIR"] = str(trace_dir)
         try:
-            trace_path = persist_trace_if_enabled(state)
+            trace_path = persist_trace_if_enabled(state, trace_events)
             trace_content = Path(trace_path).read_text(encoding="utf-8")
         finally:
             if old_enabled is None:

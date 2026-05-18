@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m unittest discover -v)",
+      "Bash(.\\\\.venv\\\\Scripts\\\\python.exe -m unittest discover -v)",
+      "Bash(D:\\\\Programs\\\\Miniconda3\\\\python.exe -m unittest discover -v)",
+      "Bash(\"D:/Programs/Miniconda3/python.exe\" -m unittest discover -v)",
+      "Bash(\"D:/Programs/Miniconda3/python.exe\" -m clothing_rag_demo.agent.eval_report)",
+      "Bash(\"D:/Programs/Miniconda3/python.exe\" -c \"from clothing_rag_demo.api.app import app; print\\('import ok'\\)\")",
+      "Bash(\"D:/Programs/Miniconda3/python.exe\" -m uvicorn clothing_rag_demo.api.app:app --host 127.0.0.1 --port 8000)",
+      "Bash(curl -s http://127.0.0.1:8000/health)",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/chat -H \"Content-Type: application/json\" -d '{\"query\":\"你是谁？\",\"debug\":true}')",
+      "Bash(\"D:/Programs/Miniconda3/python.exe\" -m json.tool)",
+      "Bash(taskkill //F //IM uvicorn.exe)"
+    ]
+  }
+}

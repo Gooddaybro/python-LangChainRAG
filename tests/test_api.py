@@ -16,13 +16,17 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
 
-    def test_chat_calls_pipeline_executor(self):
+    # /chat 现在走 LangGraph 主工作流
+    def test_chat_calls_langgraph_executor(self):
         fake_result = {
             "answer": "fake answer",
             "debug": {"stop_reason": "final_answer"},
         }
 
-        with patch("clothing_rag_demo.api.app.run_agent", return_value=fake_result) as run_agent:
+        with patch(
+            "clothing_rag_demo.api.app.run_langgraph_agent",
+            return_value=fake_result,
+        ) as mock_run:
             response = self.client.post(
                 "/chat",
                 json={
@@ -34,7 +38,7 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), fake_result)
-        run_agent.assert_called_once_with("我 175cm 70kg 穿什么码？", chat_history=[])
+        mock_run.assert_called_once_with("我 175cm 70kg 穿什么码？", chat_history=[])
 
     def test_chat_hides_debug_when_disabled(self):
         fake_result = {
@@ -42,7 +46,7 @@ class ApiTests(unittest.TestCase):
             "debug": {"stop_reason": "final_answer"},
         }
 
-        with patch("clothing_rag_demo.api.app.run_agent", return_value=fake_result):
+        with patch("clothing_rag_demo.api.app.run_langgraph_agent", return_value=fake_result):
             response = self.client.post(
                 "/chat",
                 json={"query": "这件衣服适合夏天吗？", "debug": False},
@@ -51,7 +55,32 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"answer": "fake answer"})
 
-    def test_langgraph_chat_calls_langgraph_executor(self):
+    # /chat/pipeline 走旧手写 pipeline
+    def test_pipeline_calls_pipeline_executor(self):
+        fake_result = {
+            "answer": "pipeline answer",
+            "debug": {"stop_reason": "final_answer"},
+        }
+
+        with patch(
+            "clothing_rag_demo.api.app.run_agent",
+            return_value=fake_result,
+        ) as mock_run:
+            response = self.client.post(
+                "/chat/pipeline",
+                json={
+                    "query": "我 175cm 70kg 穿什么码？",
+                    "chat_history": [],
+                    "debug": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), fake_result)
+        mock_run.assert_called_once_with("我 175cm 70kg 穿什么码？", chat_history=[])
+
+    # /chat/langgraph 保留旧路径，仍然可用
+    def test_langgraph_endpoint_still_works(self):
         fake_result = {
             "answer": "shadow answer",
             "debug": {"stop_reason": "final_answer"},
@@ -60,7 +89,7 @@ class ApiTests(unittest.TestCase):
         with patch(
             "clothing_rag_demo.api.app.run_langgraph_agent",
             return_value=fake_result,
-        ) as run_langgraph_agent:
+        ) as mock_run:
             response = self.client.post(
                 "/chat/langgraph",
                 json={
@@ -72,7 +101,7 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), fake_result)
-        run_langgraph_agent.assert_called_once_with("这件衣服适合夏天吗？", chat_history=[])
+        mock_run.assert_called_once_with("这件衣服适合夏天吗？", chat_history=[])
 
     def test_chat_rejects_blank_query(self):
         response = self.client.post("/chat", json={"query": "   "})

@@ -46,7 +46,7 @@ def fake_size_runner(query, chat_history=None):
 
 
 def fake_answer_generator(state):
-    return f"eval answer for {state.intent_result['intent']}", "eval prompt"
+    return f"eval answer for {state['intent_result']['intent']}", "eval prompt"
 
 
 class AgentEvalCaseTests(unittest.TestCase):

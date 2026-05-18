@@ -1,40 +1,51 @@
-from dataclasses import dataclass, field
-from typing import Any
+"""Agent 状态定义。
+
+AgentState 从 dataclass 迁移到 TypedDict，这是 LangGraph 的原生状态类型。
+LangGraph 用 TypedDict 做状态合并/持久化，比 dataclass 更适合图执行模型。
+
+Learning: Annotated[list, operator.add] 是 LangGraph 的 Reducer 机制。
+它告诉 LangGraph："遇到这个字段时，不要覆盖，请把新数据追加到老数据后面。"
+这样每个节点提交的 trace_events 都会被保留，形成完整的心路历程。
+"""
+
+import operator
+from typing import Annotated, Any, TypedDict
 
 
-@dataclass
-class AgentState:
-    """一次 Agent 请求在 pipeline 中流转的状态容器。
+class AgentState(TypedDict, total=False):
+    """一次 Agent 请求在 LangGraph 图中流转的状态容器。
 
-    Learning: 这就是手写 MVP 版本的“圆盘状态”。后续迁移 LangGraph 时，
-    这些字段会自然对应到图里的 State。
+    total=False 表示所有字段都是可选的，LangGraph 节点可以只返回自己修改的字段。
     """
 
-    # 输入侧：用户问题和可选历史，是一次运行的真实数据来源。
+    # 输入侧：用户问题和可选历史。
     user_query: str
-    chat_history: list[dict[str, Any]] = field(default_factory=list)
+    chat_history: list[dict[str, Any]]
 
-    # 中间结果：每个 pipeline 阶段只负责填充自己产生的数据。
-    intent_result: dict[str, Any] | None = None
-    memory_result: dict[str, Any] | None = None
-    agent_query: str | None = None
-    selected_tools: list[str] = field(default_factory=list)
-    # Learning: selected_tools 记录“调了哪些工具”，tool_call_count 记录“工具节点实际跑了几次”。
-    # 后续 LangGraph 加入重试/循环时，这个计数就是最小的死循环保护器。
-    tool_call_count: int = 0
-    tool_results: dict[str, Any] = field(default_factory=dict)
+    # 中间结果：每个节点只负责填充自己产生的数据。
+    intent_result: dict[str, Any]
+    memory_result: dict[str, Any]
+    agent_query: str
+    selected_tools: list[str]
+    # tool_call_count 记录工具节点实际跑了几次，是死循环保护器。
+    tool_call_count: int
+    tool_results: dict[str, Any]
 
     # 输出侧：answer 给用户看，final_prompt 和 stop_reason 给调试/评测看。
-    answer: str | None = None
-    final_prompt: str | None = None
-    stop_reason: str | None = None
-    trace_events: list[dict[str, Any]] = field(default_factory=list)
+    answer: str
+    final_prompt: str
+    stop_reason: str
 
-    def add_trace(self, step: str, **data: Any) -> None:
-        """记录本地调试事件，帮助你复盘 Agent 每一步为什么这么走。"""
-        self.trace_events.append(
-            {
-                "step": step,
-                "data": data,
-            }
-        )
+    # Annotated[list, operator.add] 是 Reducer：多个节点提交的 trace 会自动追加合并。
+    # 节点返回 {"trace_events": [新事件]}，LangGraph 会执行 老数据 + 新数据。
+    trace_events: Annotated[list[dict[str, Any]], operator.add]
+
+
+def make_trace(step: str, **data: Any) -> list[dict[str, Any]]:
+    """创建 trace 事件列表，供 mutate 函数返回。
+
+    Learning: mutate 函数不再直接往 state 里 append，而是返回 trace 事件。
+    由调用方（langgraph 节点）收集后统一返回给 LangGraph，通过 Annotated reducer 合并。
+    这样避免了"mutate 函数 append 一次 + reducer 又 append 一次"的重复问题。
+    """
+    return [{"step": step, "data": data}]

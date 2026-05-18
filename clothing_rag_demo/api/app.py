@@ -29,7 +29,7 @@ class ChatRequest(BaseModel):
 app = FastAPI(
     title=PROJECT_API_TITLE,
     description="API entrypoint for the clothing size and product QA assistant.",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 
@@ -54,12 +54,21 @@ def health():
     return {"status": "ok"}
 
 
+# /chat 现在走 LangGraph 主工作流（原主线 pipeline 保留在 /chat/pipeline）。
 @app.post("/chat")
 def chat(request: ChatRequest):
+    result = run_langgraph_agent(request.query.strip(), chat_history=request.chat_history)
+    return build_chat_response(result, request.debug)
+
+
+# 旧手写 pipeline 对照入口，方便和 LangGraph 做行为对比。
+@app.post("/chat/pipeline")
+def chat_pipeline(request: ChatRequest):
     result = run_agent(request.query.strip(), chat_history=request.chat_history)
     return build_chat_response(result, request.debug)
 
 
+# 保留旧的 /chat/langgraph 路径，避免破坏已有调用方。
 @app.post("/chat/langgraph")
 def chat_langgraph(request: ChatRequest):
     result = run_langgraph_agent(request.query.strip(), chat_history=request.chat_history)

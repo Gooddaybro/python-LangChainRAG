@@ -30,29 +30,32 @@ def get_trace_dir():
     return DEFAULT_TRACE_DIR
 
 
-def build_trace_record(state):
+def build_trace_record(state, trace_events):
     """只保存复盘需要的字段，不把完整 prompt 或大对象默认写进 trace。"""
     return {
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "user_query": state.user_query,
-        "selected_tools": state.selected_tools,
-        "tool_call_count": state.tool_call_count,
-        "stop_reason": state.stop_reason,
-        "answer": state.answer,
-        "trace_events": state.trace_events,
+        "user_query": state["user_query"],
+        "selected_tools": state.get("selected_tools", []),
+        "tool_call_count": state.get("tool_call_count", 0),
+        "stop_reason": state.get("stop_reason"),
+        "answer": state.get("answer"),
+        "trace_events": trace_events,
     }
 
 
-def persist_trace_if_enabled(state):
+def persist_trace_if_enabled(state, trace_events=None):
     """在启用时把一次 Agent 运行追加写入 jsonl trace 文件。"""
     if not is_trace_to_file_enabled():
         return None
+
+    if trace_events is None:
+        trace_events = state.get("trace_events", [])
 
     trace_dir = get_trace_dir()
     trace_dir.mkdir(parents=True, exist_ok=True)
     trace_file = trace_dir / f"agent_trace_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jsonl"
 
     with trace_file.open("a", encoding="utf-8") as file:
-        file.write(json.dumps(build_trace_record(state), ensure_ascii=False) + "\n")
+        file.write(json.dumps(build_trace_record(state, trace_events), ensure_ascii=False) + "\n")
 
     return str(trace_file)

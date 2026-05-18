@@ -46,7 +46,7 @@ def fake_size_runner(query, chat_history=None):
 
 
 def fake_answer_generator(state):
-    return f"shadow answer for {state.intent_result['intent']}", "shadow prompt"
+    return f"shadow answer for {state['intent_result']['intent']}", "shadow prompt"
 
 
 def build_fake_registry():

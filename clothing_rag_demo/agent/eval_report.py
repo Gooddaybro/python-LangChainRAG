@@ -63,7 +63,7 @@ def fake_size_runner(query, chat_history=None):
 
 
 def fake_answer_generator(state):
-    return f"eval report answer for {state.intent_result['intent']}", "eval report prompt"
+    return f"eval report answer for {state['intent_result']['intent']}", "eval report prompt"
 
 
 def build_fake_tool_registry():
