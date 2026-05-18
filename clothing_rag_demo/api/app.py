@@ -1,17 +1,21 @@
+import logging
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from clothing_rag_demo.agent.agent_executor import run_agent
 from clothing_rag_demo.agent.langgraph_executor import run_langgraph_agent
 from clothing_rag_demo.config_data import PROJECT_API_TITLE
 
+logger = logging.getLogger(__name__)
+
 
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1)
     chat_history: list[dict[str, Any]] = Field(default_factory=list)
-    debug: bool = True
+    debug: bool = False
 
     @field_validator("query")
     @classmethod
@@ -27,6 +31,15 @@ app = FastAPI(
     description="API entrypoint for the clothing size and product QA assistant.",
     version="0.1.0",
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "internal_server_error", "detail": str(exc)},
+    )
 
 
 def build_chat_response(agent_result, include_debug):
