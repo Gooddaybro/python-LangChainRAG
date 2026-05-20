@@ -3,7 +3,7 @@
 面向服装电商客服和导购场景的 AI 助手系统，包含 Streamlit 演示入口和 FastAPI 后端入口。
 
 - `app_file_uploader.py`：上传并重建本地知识库。
-- `app_qa.py`：普通 RAG 问答，可勾选启用导购 Agent。
+- `app_qa.py`：本地 Agent 调试台，可切换 LangGraph 主线和旧 Pipeline 对照。
 
 ## Setup
 
@@ -49,14 +49,15 @@ uvicorn clothing_rag_demo.api.app:app --reload --port 8001
 当前接口：
 
 - `GET /health`：健康检查。
-- `POST /chat`：调用主线 `run_agent`。
-- `POST /chat/langgraph`：调用 LangGraph shadow `run_langgraph_agent`。
+- `POST /chat`：调用 LangGraph 主线 `run_langgraph_agent`。
+- `POST /chat/pipeline`：调用旧手写 pipeline `run_agent`，用于迁移对照和回归检查。
+- `POST /chat/langgraph`：兼容路径，同样调用 LangGraph 主线 `run_langgraph_agent`。
 
 ## Agent Executors
 
-当前主线入口仍是 `clothing_rag_demo.agent.agent_executor.run_agent`。
-项目还提供 LangGraph 影子入口 `clothing_rag_demo.agent.langgraph_executor.run_langgraph_agent`，
-用于验证现有 pipeline 能否迁移到 LangGraph，不默认接入 Streamlit。
+当前主线入口是 `clothing_rag_demo.agent.langgraph_executor.run_langgraph_agent`。
+旧手写 pipeline 保留为 `clothing_rag_demo.agent.agent_executor.run_agent`，
+通过 `/chat/pipeline` 和 Streamlit 工作台中的 `Pipeline 对照` 模式用于行为对照。
 
 ## Test
 
@@ -67,7 +68,7 @@ python -m compileall -q clothing_rag_demo tests
 
 ## Eval Report
 
-生成主线 Agent 和 LangGraph shadow 的确定性评测对比表：
+生成旧手写 pipeline 和 LangGraph 主线的确定性评测对比表：
 
 ```powershell
 python -m clothing_rag_demo.agent.eval_report

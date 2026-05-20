@@ -38,7 +38,31 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), fake_result)
-        mock_run.assert_called_once_with("我 175cm 70kg 穿什么码？", chat_history=[])
+        mock_run.assert_called_once_with("我 175cm 70kg 穿什么码？", chat_history=[], thread_id=None)
+
+    def test_chat_passes_thread_id_to_langgraph_executor(self):
+        fake_result = {
+            "answer": "fake answer",
+            "debug": {"thread_id": "api-thread-1"},
+        }
+
+        with patch(
+            "clothing_rag_demo.api.app.run_langgraph_agent",
+            return_value=fake_result,
+        ) as mock_run:
+            response = self.client.post(
+                "/chat",
+                json={
+                    "query": "你是谁？",
+                    "chat_history": [],
+                    "thread_id": "api-thread-1",
+                    "debug": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), fake_result)
+        mock_run.assert_called_once_with("你是谁？", chat_history=[], thread_id="api-thread-1")
 
     def test_chat_hides_debug_when_disabled(self):
         fake_result = {
@@ -101,7 +125,7 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), fake_result)
-        mock_run.assert_called_once_with("这件衣服适合夏天吗？", chat_history=[])
+        mock_run.assert_called_once_with("这件衣服适合夏天吗？", chat_history=[], thread_id=None)
 
     def test_chat_rejects_blank_query(self):
         response = self.client.post("/chat", json={"query": "   "})

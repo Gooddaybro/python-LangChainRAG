@@ -12,8 +12,8 @@ from clothing_rag_demo.file_history_store import (
 )
 
 
-PIPELINE_MODE = "Pipeline 主线"
-LANGGRAPH_MODE = "LangGraph Shadow"
+LANGGRAPH_MODE = "LangGraph 主线"
+PIPELINE_MODE = "Pipeline 对照"
 
 
 def run_selected_agent(
@@ -23,7 +23,7 @@ def run_selected_agent(
     pipeline_runner=run_agent,
     langgraph_runner=run_langgraph_agent,
 ):
-    """根据页面选择运行主线 Pipeline 或 LangGraph shadow。"""
+    """根据页面选择运行 LangGraph 主线或旧 Pipeline 对照。"""
     if execution_mode == LANGGRAPH_MODE:
         return langgraph_runner(clean_query, chat_history=chat_history)
 
@@ -45,7 +45,7 @@ def build_page_hero_html():
     return f"""
         <div class="agent-hero">
             <h1>{PROJECT_DISPLAY_NAME}</h1>
-            <p>Pipeline 与 LangGraph Shadow 的本地调试控制台</p>
+            <p>LangGraph 主线与 Pipeline 对照的本地调试控制台</p>
         </div>
         """
 
@@ -279,14 +279,14 @@ def main():
 
     if "last_agent_result" not in st.session_state:
         st.session_state["last_agent_result"] = None
-        st.session_state["last_execution_mode"] = PIPELINE_MODE
+        st.session_state["last_execution_mode"] = LANGGRAPH_MODE
 
     control_column, answer_column = st.columns([0.9, 1.4])
 
     with control_column:
         execution_mode = st.radio(
             "执行模式",
-            [PIPELINE_MODE, LANGGRAPH_MODE],
+            [LANGGRAPH_MODE, PIPELINE_MODE],
             horizontal=True,
             key="execution_mode",
         )

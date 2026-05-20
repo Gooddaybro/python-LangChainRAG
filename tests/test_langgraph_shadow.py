@@ -1,7 +1,12 @@
 import unittest
+from uuid import uuid4
 
 from clothing_rag_demo.agent.eval_cases import EVAL_CASES
-from clothing_rag_demo.agent.langgraph_executor import run_langgraph_agent
+from clothing_rag_demo.agent import nodes
+from clothing_rag_demo.agent.langgraph_executor import (
+    get_default_langgraph_agent,
+    run_langgraph_agent,
+)
 from clothing_rag_demo.agent.tool_registry import build_default_tool_registry
 
 
@@ -12,7 +17,7 @@ def fake_rag_runner(query, query_type=None):
             {
                 "chunk_id": "shadow-chunk-001",
                 "file_name": "颜色选择.txt",
-                "content": "用于 LangGraph shadow 测试的知识库资料。",
+                "content": "用于 LangGraph 主线测试的知识库资料。",
                 "score": 0.1,
             }
         ],
@@ -28,14 +33,14 @@ def fake_policy_runner(query):
         "policy_chunks": [],
         "raw_retrieved_chunks": [],
         "source_count": 0,
-        "reason": "shadow no policy source",
+        "reason": "langgraph no policy source",
     }
 
 
 def fake_size_runner(query, chat_history=None):
     return {
         "recommended_size": "L",
-        "reason": "shadow size",
+        "reason": "langgraph size",
         "alternative": "XL" if "宽松" in query else None,
         "match_type": "exact",
         "preference": None,
@@ -46,7 +51,7 @@ def fake_size_runner(query, chat_history=None):
 
 
 def fake_answer_generator(state):
-    return f"shadow answer for {state['intent_result']['intent']}", "shadow prompt"
+    return f"langgraph answer for {state['intent_result']['intent']}", "langgraph prompt"
 
 
 def build_fake_registry():
@@ -58,6 +63,55 @@ def build_fake_registry():
 
 
 class LangGraphShadowTests(unittest.TestCase):
+    def test_nodes_module_exposes_graph_node_functions(self):
+        self.assertTrue(callable(nodes.route_intent_node))
+        self.assertTrue(callable(nodes.resolve_memory_node))
+        self.assertTrue(callable(nodes.direct_answer_node))
+        self.assertTrue(callable(nodes.execute_tools_node))
+        self.assertTrue(callable(nodes.policy_fallback_node))
+        self.assertTrue(callable(nodes.fallback_rag_node))
+        self.assertTrue(callable(nodes.generate_answer_node))
+        self.assertTrue(callable(nodes.tool_budget_exhausted_node))
+
+    def test_default_langgraph_agent_is_cached(self):
+        self.assertIs(get_default_langgraph_agent(), get_default_langgraph_agent())
+
+    def test_default_langgraph_agent_persists_checkpoints_by_thread_id(self):
+        thread_id = f"test-thread-{uuid4()}"
+
+        result = run_langgraph_agent("你是谁？", thread_id=thread_id)
+        graph = get_default_langgraph_agent()
+        history = list(graph.get_state_history({"configurable": {"thread_id": thread_id}}))
+
+        self.assertEqual(result["debug"]["thread_id"], thread_id)
+        self.assertGreater(len(history), 0)
+
+    def test_response_debug_includes_thread_and_run_ids(self):
+        result = run_langgraph_agent(
+            "你是谁？",
+            thread_id="learn-thread",
+            tool_registry=build_fake_registry(),
+            answer_generator=fake_answer_generator,
+        )
+        debug = result["debug"]
+        trace_steps = [event["step"] for event in debug["trace_events"]]
+
+        self.assertEqual(debug["thread_id"], "learn-thread")
+        self.assertTrue(debug["run_id"])
+        self.assertIn("run_started", trace_steps)
+        self.assertEqual(debug["trace_events"][0]["data"]["thread_id"], "learn-thread")
+        self.assertEqual(debug["trace_events"][0]["data"]["run_id"], debug["run_id"])
+
+    def test_missing_thread_id_is_generated(self):
+        result = run_langgraph_agent(
+            "你是谁？",
+            tool_registry=build_fake_registry(),
+            answer_generator=fake_answer_generator,
+        )
+
+        self.assertTrue(result["debug"]["thread_id"].startswith("thread-"))
+        self.assertTrue(result["debug"]["run_id"].startswith("run-"))
+
     def test_direct_answer_uses_no_tools(self):
         result = run_langgraph_agent(
             "你是谁？",

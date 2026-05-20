@@ -21,6 +21,8 @@ class AgentState(TypedDict, total=False):
     # 输入侧：用户问题和可选历史。
     user_query: str
     chat_history: list[dict[str, Any]]
+    thread_id: str
+    run_id: str
 
     # 中间结果：每个节点只负责填充自己产生的数据。
     intent_result: dict[str, Any]

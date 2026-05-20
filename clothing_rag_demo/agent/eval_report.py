@@ -1,6 +1,6 @@
 """Agent 评测报告生成器。
 
-这个模块把同一批固定 eval cases 同时跑在手写 pipeline 和 LangGraph shadow 上，
+这个模块把同一批固定 eval cases 同时跑在旧手写 pipeline 和 LangGraph 主线上，
 用表格检查两条路径的意图、工具、停止原因和 RAG 命中是否一致。
 """
 
@@ -158,7 +158,7 @@ def build_eval_report(
 ):
     """生成完整评测报告数据。
 
-    默认对比 pipeline 和 LangGraph shadow；传入参数可以让测试覆盖更小范围。
+    默认对比 pipeline 和 LangGraph 主线；传入参数可以让测试覆盖更小范围。
     """
     cases = cases or EVAL_CASES
     executors = executors or DEFAULT_EXECUTORS

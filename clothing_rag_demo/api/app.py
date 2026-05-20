@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1)
     chat_history: list[dict[str, Any]] = Field(default_factory=list)
+    thread_id: str | None = None
     debug: bool = False
 
     @field_validator("query")
@@ -57,7 +58,11 @@ def health():
 # /chat 现在走 LangGraph 主工作流（原主线 pipeline 保留在 /chat/pipeline）。
 @app.post("/chat")
 def chat(request: ChatRequest):
-    result = run_langgraph_agent(request.query.strip(), chat_history=request.chat_history)
+    result = run_langgraph_agent(
+        request.query.strip(),
+        chat_history=request.chat_history,
+        thread_id=request.thread_id,
+    )
     return build_chat_response(result, request.debug)
 
 
@@ -71,5 +76,9 @@ def chat_pipeline(request: ChatRequest):
 # 保留旧的 /chat/langgraph 路径，避免破坏已有调用方。
 @app.post("/chat/langgraph")
 def chat_langgraph(request: ChatRequest):
-    result = run_langgraph_agent(request.query.strip(), chat_history=request.chat_history)
+    result = run_langgraph_agent(
+        request.query.strip(),
+        chat_history=request.chat_history,
+        thread_id=request.thread_id,
+    )
     return build_chat_response(result, request.debug)

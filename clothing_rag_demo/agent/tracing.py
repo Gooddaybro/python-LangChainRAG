@@ -35,6 +35,8 @@ def build_trace_record(state, trace_events):
     return {
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "user_query": state["user_query"],
+        "thread_id": state.get("thread_id"),
+        "run_id": state.get("run_id"),
         "selected_tools": state.get("selected_tools", []),
         "tool_call_count": state.get("tool_call_count", 0),
         "stop_reason": state.get("stop_reason"),

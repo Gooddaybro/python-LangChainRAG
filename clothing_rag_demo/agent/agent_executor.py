@@ -1,7 +1,7 @@
 """手写 MVP Agent 执行器。
 
-这个模块是当前主线 pipeline：按固定顺序完成路由、记忆、工具、兜底和生成。
-LangGraph shadow 现在复用这里的节点函数，用来证明图版本和主线行为一致。
+这个模块是旧手写 pipeline：按固定顺序完成路由、记忆、工具、兜底和生成。
+LangGraph 主线复用这里的业务阶段函数，用来保持迁移期间的行为一致。
 
 Learning: 所有 mutate 函数现在使用 dict 语法访问 state（因为 AgentState 是 TypedDict），
 并且返回 trace_events 列表而不是直接往 state 里 append。
@@ -261,14 +261,15 @@ def build_response_from_state(state, trace_events=None):
         stop_reason=state.get("stop_reason"),
         tool_call_count=state.get("tool_call_count", 0),
         trace_events=traces,
+        thread_id=state.get("thread_id"),
+        run_id=state.get("run_id"),
     )
 
 
 def run_agent(user_query, chat_history=None, tool_registry=None, answer_generator=None):
-    """运行当前主线手写 Agent。
+    """运行旧手写 Pipeline Agent。
 
-    Learning: 这条线还是单个 Agent 的固定 pipeline；LangGraph 只是 shadow 对照，
-    还没有成为生产主入口。
+    Learning: 这条线保留为 LangGraph 主线的行为对照，不再作为默认入口。
     """
     state: AgentState = {
         "user_query": user_query,
@@ -316,6 +317,8 @@ def build_agent_response(
         stop_reason=None,
         tool_call_count=0,
         trace_events=None,
+        thread_id=None,
+        run_id=None,
 ):
     """统一 Agent 输出契约。
 
@@ -327,6 +330,8 @@ def build_agent_response(
         "answer": answer,
         "debug": {
             "user_query": user_query,
+            "thread_id": thread_id,
+            "run_id": run_id,
             "intent_result": intent_result,
             "selected_tools": selected_tools,
             "used_history": memory_result["used_history"],
