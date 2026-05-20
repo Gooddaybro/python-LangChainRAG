@@ -53,11 +53,35 @@ uvicorn clothing_rag_demo.api.app:app --reload --port 8001
 - `POST /chat/pipeline`：调用旧手写 pipeline `run_agent`，用于迁移对照和回归检查。
 - `POST /chat/langgraph`：兼容路径，同样调用 LangGraph 主线 `run_langgraph_agent`。
 
+详细接口契约见 `docs/api-design.md`。
+
 ## Agent Executors
 
 当前主线入口是 `clothing_rag_demo.agent.langgraph_executor.run_langgraph_agent`。
 旧手写 pipeline 保留为 `clothing_rag_demo.agent.agent_executor.run_agent`，
 通过 `/chat/pipeline` 和 Streamlit 工作台中的 `Pipeline 对照` 模式用于行为对照。
+
+LangGraph 主线现在按生产节点边界组织：
+
+```text
+intent_router
+-> context_resolver
+-> direct_answer_gate
+-> missing_info_gate
+-> structured_lookup
+-> rag_retriever
+-> retrieval_grader
+-> answer_generator
+-> answer_validator
+-> trace_logger
+```
+
+结构化商品事实放在 `clothing_rag_demo/data/product_catalog.json`。
+价格、库存、颜色列表、SKU、尺码规则 id 只从这个文件查询；
+RAG 只负责颜色搭配、洗涤养护、风格场景这类解释性知识。
+
+详细图结构和节点契约见 `docs/langgraph-flow.md`。
+详细数据边界见 `docs/data-boundary.md`。
 
 ## Test
 
@@ -68,7 +92,9 @@ python -m compileall -q clothing_rag_demo tests
 
 ## Eval Report
 
-生成旧手写 pipeline 和 LangGraph 主线的确定性评测对比表：
+生成确定性评测表。部分 case 会同时跑旧手写 pipeline 和 LangGraph 主线；
+结构化查询等生产主线能力会标记为 LangGraph-only，避免把“迁移对照”
+误当成“两个 executor 必须完全一致”。
 
 ```powershell
 python -m clothing_rag_demo.agent.eval_report

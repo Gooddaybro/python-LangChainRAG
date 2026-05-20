@@ -14,15 +14,21 @@ from clothing_rag_demo.agent.agent_executor import (
     default_answer_generator,
 )
 from clothing_rag_demo.agent.nodes import (
+    answer_generator_node,
+    answer_validator_node,
     direct_answer_node,
-    execute_tools_node,
-    fallback_rag_node,
-    generate_answer_node,
+    missing_info_gate_node,
     policy_fallback_node,
+    rag_retriever_node,
     resolve_memory_node,
+    retrieval_grader_node,
     route_after_direct_answer,
+    route_after_missing_info,
     route_after_policy_fallback,
+    route_after_structured_lookup,
     route_intent_node,
+    structured_lookup_node,
+    trace_logger_node,
     tool_budget_exhausted_node,
 )
 from clothing_rag_demo.agent.state import AgentState, make_trace
@@ -56,50 +62,82 @@ def build_langgraph_agent(
     answer_generator = answer_generator or default_answer_generator
 
     graph = StateGraph(AgentState)
-    graph.add_node("route_intent", route_intent_node)
-    graph.add_node("resolve_memory", resolve_memory_node)
-    graph.add_node("direct_answer", direct_answer_node)
+    graph.add_node("intent_router", route_intent_node)
+    graph.add_node("context_resolver", resolve_memory_node)
+    graph.add_node("direct_answer_gate", direct_answer_node)
+    graph.add_node("missing_info_gate", missing_info_gate_node)
     graph.add_node(
-        "execute_tools",
-        lambda state: execute_tools_node(state, registry=registry, max_tool_calls=max_tool_calls),
+        "structured_lookup",
+        lambda state: structured_lookup_node(state, registry=registry, max_tool_calls=max_tool_calls),
     )
     graph.add_node("policy_fallback", policy_fallback_node)
-    graph.add_node("fallback_rag", lambda state: fallback_rag_node(state, registry=registry))
     graph.add_node(
-        "generate_answer",
-        lambda state: generate_answer_node(state, answer_generator=answer_generator),
+        "rag_retriever",
+        lambda state: rag_retriever_node(state, registry=registry, max_tool_calls=max_tool_calls),
     )
+    graph.add_node("retrieval_grader", retrieval_grader_node)
+    graph.add_node(
+        "answer_generator",
+        lambda state: answer_generator_node(state, answer_generator=answer_generator),
+    )
+    graph.add_node("answer_validator", answer_validator_node)
+    graph.add_node("trace_logger", trace_logger_node)
     graph.add_node(
         "tool_budget_exhausted",
         lambda state: tool_budget_exhausted_node(state, max_tool_calls=max_tool_calls),
     )
 
-    graph.add_edge(START, "route_intent")
-    graph.add_edge("route_intent", "resolve_memory")
-    graph.add_edge("resolve_memory", "direct_answer")
+    graph.add_edge(START, "intent_router")
+    graph.add_edge("intent_router", "context_resolver")
+    graph.add_edge("context_resolver", "direct_answer_gate")
     graph.add_conditional_edges(
-        "direct_answer",
+        "direct_answer_gate",
         lambda state: route_after_direct_answer(state, max_tool_calls=max_tool_calls),
         {
-            "stop": END,
+            "stop": "trace_logger",
             "budget_exhausted": "tool_budget_exhausted",
-            "execute_tools": "execute_tools",
+            "missing_info": "missing_info_gate",
         },
     )
-    graph.add_edge("execute_tools", "policy_fallback")
+    graph.add_conditional_edges(
+        "missing_info_gate",
+        lambda state: route_after_missing_info(state, max_tool_calls=max_tool_calls),
+        {
+            "stop": "trace_logger",
+            "budget_exhausted": "tool_budget_exhausted",
+            "structured_lookup": "structured_lookup",
+        },
+    )
+    graph.add_conditional_edges(
+        "structured_lookup",
+        lambda state: route_after_structured_lookup(
+            state,
+            registry=registry,
+            max_tool_calls=max_tool_calls,
+        ),
+        {
+            "stop": "trace_logger",
+            "policy_fallback": "policy_fallback",
+            "budget_exhausted": "tool_budget_exhausted",
+            "rag_retriever": "rag_retriever",
+            "answer_generator": "answer_generator",
+        },
+    )
     graph.add_conditional_edges(
         "policy_fallback",
         lambda state: route_after_policy_fallback(state, max_tool_calls=max_tool_calls),
         {
-            "stop": END,
-            "generate_answer": "generate_answer",
+            "stop": "trace_logger",
+            "answer_generator": "answer_generator",
             "budget_exhausted": "tool_budget_exhausted",
-            "fallback_rag": "fallback_rag",
         },
     )
-    graph.add_edge("fallback_rag", "generate_answer")
-    graph.add_edge("generate_answer", END)
-    graph.add_edge("tool_budget_exhausted", END)
+    graph.add_edge("rag_retriever", "retrieval_grader")
+    graph.add_edge("retrieval_grader", "answer_generator")
+    graph.add_edge("answer_generator", "answer_validator")
+    graph.add_edge("answer_validator", "trace_logger")
+    graph.add_edge("tool_budget_exhausted", "trace_logger")
+    graph.add_edge("trace_logger", END)
 
     return graph.compile(checkpointer=checkpointer)
 

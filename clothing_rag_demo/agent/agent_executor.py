@@ -263,6 +263,13 @@ def build_response_from_state(state, trace_events=None):
         trace_events=traces,
         thread_id=state.get("thread_id"),
         run_id=state.get("run_id"),
+        missing_info_result=state.get("missing_info_result", {}),
+        structured_result=state.get("structured_result", {}),
+        accepted_chunks=state.get("accepted_chunks", []),
+        rejected_chunks=state.get("rejected_chunks", []),
+        draft_answer=state.get("draft_answer", ""),
+        validation_result=state.get("validation_result", {}),
+        evidence_summary=state.get("evidence_summary", {}),
     )
 
 
@@ -319,6 +326,13 @@ def build_agent_response(
         trace_events=None,
         thread_id=None,
         run_id=None,
+        missing_info_result=None,
+        structured_result=None,
+        accepted_chunks=None,
+        rejected_chunks=None,
+        draft_answer=None,
+        validation_result=None,
+        evidence_summary=None,
 ):
     """统一 Agent 输出契约。
 
@@ -338,6 +352,13 @@ def build_agent_response(
             "ignored_history_reason": memory_result["ignored_history_reason"],
             "retrieval_query": rag_result.get("retrieval_query"),
             "retrieved_chunks": rag_result.get("retrieved_chunks", []),
+            "missing_info_result": missing_info_result or {},
+            "structured_result": structured_result or {},
+            "accepted_chunks": accepted_chunks or [],
+            "rejected_chunks": rejected_chunks or [],
+            "draft_answer": draft_answer or "",
+            "validation_result": validation_result or {},
+            "evidence_summary": evidence_summary or {},
             "tool_results": tool_results,
             "tool_call_count": tool_call_count,
             "final_prompt": final_prompt,

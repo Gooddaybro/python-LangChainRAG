@@ -12,6 +12,7 @@ INTENT_PRODUCT_QA = "product_qa"
 INTENT_POLICY_QA = "policy_qa"
 INTENT_RECOMMENDATION = "recommendation"
 INTENT_INVENTORY_CHECK = "inventory_check"
+INTENT_PRICE_CHECK = "price_check"
 INTENT_CHAT = "chat"
 INTENT_UNKNOWN = "unknown"
 
@@ -74,6 +75,15 @@ INVENTORY_KEYWORDS = [
     "黑色有",
     "白色有",
     "颜色有",
+]
+
+PRICE_KEYWORDS = [
+    "多少钱",
+    "价格",
+    "售价",
+    "几块",
+    "几元",
+    "贵吗",
 ]
 
 RECOMMENDATION_KEYWORDS = [
@@ -179,6 +189,14 @@ def intent_router(user_query):
             "inventory",
             need_history,
             "命中库存、颜色是否有货相关关键词。",
+        )
+
+    if contains_any(normalized_query, PRICE_KEYWORDS):
+        return build_router_result(
+            INTENT_PRICE_CHECK,
+            "price",
+            need_history,
+            "命中价格或售价相关关键词。",
         )
 
     if has_measurement_signal(normalized_query) or contains_any(normalized_query, SIZE_KEYWORDS):

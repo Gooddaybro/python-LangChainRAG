@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from clothing_rag_demo.agent.eval_cases import EVAL_CASES
+from clothing_rag_demo.agent.eval_cases import get_case_executors
 from clothing_rag_demo.agent.eval_report import (
     build_eval_report,
     format_json_report,
@@ -20,7 +21,7 @@ class EvalReportTests(unittest.TestCase):
 
         self.assertEqual(summary["case_count"], len(EVAL_CASES))
         self.assertEqual(summary["executor_count"], 2)
-        self.assertEqual(summary["row_count"], len(EVAL_CASES) * 2)
+        self.assertEqual(summary["row_count"], sum(len(get_case_executors(case)) for case in EVAL_CASES))
         self.assertEqual(summary["failed_count"], 0)
         self.assertEqual(summary["inconsistent_case_count"], 0)
         self.assertEqual(executors, {"pipeline", "langgraph"})

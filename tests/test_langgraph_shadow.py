@@ -1,7 +1,11 @@
 import unittest
 from uuid import uuid4
 
-from clothing_rag_demo.agent.eval_cases import EVAL_CASES
+from clothing_rag_demo.agent.eval_cases import (
+    EVAL_CASES,
+    case_supports_executor,
+    get_expected_value,
+)
 from clothing_rag_demo.agent import nodes
 from clothing_rag_demo.agent.langgraph_executor import (
     get_default_langgraph_agent,
@@ -151,7 +155,7 @@ class LangGraphShadowTests(unittest.TestCase):
             answer_generator=fake_answer_generator,
         )
 
-        self.assertEqual(result["debug"]["selected_tools"], ["rag_tool", "size_tool"])
+        self.assertEqual(result["debug"]["selected_tools"], ["size_tool", "rag_tool"])
         self.assertEqual(result["debug"]["tool_call_count"], 2)
 
     def test_tool_budget_zero_stops_before_tools(self):
@@ -171,6 +175,9 @@ class LangGraphShadowTests(unittest.TestCase):
         registry = build_fake_registry()
 
         for case in EVAL_CASES:
+            if not case_supports_executor(case, "langgraph"):
+                continue
+
             with self.subTest(case=case["name"]):
                 result = run_langgraph_agent(
                     case["query"],
@@ -180,11 +187,20 @@ class LangGraphShadowTests(unittest.TestCase):
                 )
                 debug = result["debug"]
 
-                self.assertEqual(debug["intent_result"]["intent"], case["expected_intent"])
-                self.assertEqual(debug["selected_tools"], case["expected_tools"])
-                self.assertEqual(debug["stop_reason"], case["expected_stop_reason"])
+                self.assertEqual(
+                    debug["intent_result"]["intent"],
+                    get_expected_value(case, "langgraph", "expected_intent"),
+                )
+                self.assertEqual(
+                    debug["selected_tools"],
+                    get_expected_value(case, "langgraph", "expected_tools"),
+                )
+                self.assertEqual(
+                    debug["stop_reason"],
+                    get_expected_value(case, "langgraph", "expected_stop_reason"),
+                )
 
-                if case["requires_rag"]:
+                if get_expected_value(case, "langgraph", "requires_rag"):
                     self.assertGreater(len(debug["retrieved_chunks"]), 0)
                 else:
                     self.assertEqual(len(debug["retrieved_chunks"]), 0)

@@ -232,6 +232,14 @@ def render_agent_debug(debug):
     with tools_tab:
         st.write("调用工具：")
         st.json(debug["selected_tools"])
+        st.write("缺信息检查：")
+        st.json(debug.get("missing_info_result", {}))
+        st.write("结构化查询结果：")
+        st.json(debug.get("structured_result", {}))
+        st.write("答案校验：")
+        st.json(debug.get("validation_result", {}))
+        st.write("证据摘要：")
+        st.json(debug.get("evidence_summary", {}))
         st.write("工具结果：")
         st.json(debug["tool_results"])
 
@@ -239,7 +247,8 @@ def render_agent_debug(debug):
         if debug["retrieval_query"]:
             st.write("检索输入：")
             st.code(debug["retrieval_query"], language="text")
-        render_chunks("Agent 检索资料", debug["retrieved_chunks"])
+        render_chunks("Accepted Chunks", debug.get("accepted_chunks", debug["retrieved_chunks"]))
+        render_chunks("Rejected Chunks", debug.get("rejected_chunks", []))
 
     with prompt_tab:
         st.code(debug["final_prompt"], language="text")

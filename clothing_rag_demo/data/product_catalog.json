@@ -1,0 +1,51 @@
+{
+  "products": [
+    {
+      "sku": "TS-BASIC-001",
+      "product_id": "TSHIRT_BASIC_001",
+      "name": "基础款纯棉T恤",
+      "category": "T恤",
+      "material": "100%纯棉",
+      "price_cny": 99,
+      "size_rule_id": "default_tshirt",
+      "policy_id": "standard_apparel",
+      "colors": [
+        {"name": "黑色", "stock": {"S": 6, "M": 12, "L": 8, "XL": 0}},
+        {"name": "白色", "stock": {"S": 3, "M": 5, "L": 2, "XL": 1}},
+        {"name": "灰色", "stock": {"S": 0, "M": 4, "L": 3, "XL": 0}}
+      ],
+      "aliases": ["T恤", "纯棉T恤", "基础T", "基础款T恤"]
+    },
+    {
+      "sku": "JK-COMMUTE-001",
+      "product_id": "JACKET_COMMUTE_001",
+      "name": "通勤轻薄外套",
+      "category": "外套",
+      "material": "聚酯纤维混纺",
+      "price_cny": 299,
+      "size_rule_id": "default_jacket",
+      "policy_id": "standard_apparel",
+      "colors": [
+        {"name": "黑色", "stock": {"M": 4, "L": 7, "XL": 2}},
+        {"name": "藏青色", "stock": {"M": 5, "L": 5, "XL": 1}},
+        {"name": "卡其色", "stock": {"M": 0, "L": 2, "XL": 0}}
+      ],
+      "aliases": ["外套", "通勤外套", "轻薄外套"]
+    },
+    {
+      "sku": "PANTS-STRAIGHT-001",
+      "product_id": "PANTS_STRAIGHT_001",
+      "name": "直筒休闲长裤",
+      "category": "长裤",
+      "material": "棉涤混纺",
+      "price_cny": 199,
+      "size_rule_id": "default_pants",
+      "policy_id": "standard_apparel",
+      "colors": [
+        {"name": "黑色", "stock": {"M": 8, "L": 6, "XL": 3}},
+        {"name": "深蓝色", "stock": {"M": 2, "L": 4, "XL": 0}}
+      ],
+      "aliases": ["长裤", "休闲裤", "直筒裤"]
+    }
+  ]
+}

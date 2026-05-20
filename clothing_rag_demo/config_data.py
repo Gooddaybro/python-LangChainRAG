@@ -7,6 +7,7 @@ BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DISPLAY_NAME = "AI Clothing Shopping Assistant System"
 PROJECT_API_TITLE = f"{PROJECT_DISPLAY_NAME} API"
 DATA_DIR = BASE_DIR / "data"
+PRODUCT_CATALOG_PATH = DATA_DIR / "product_catalog.json"
 CHAT_HISTORY_DIR = BASE_DIR / "chat_history"
 VECTOR_DB_DIR = BASE_DIR / "chroma_db"
 FILE_HASH_RECORD_PATH = BASE_DIR / "knowledge_file_hashes.json"

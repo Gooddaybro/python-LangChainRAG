@@ -28,6 +28,13 @@ class AgentState(TypedDict, total=False):
     intent_result: dict[str, Any]
     memory_result: dict[str, Any]
     agent_query: str
+    missing_info_result: dict[str, Any]
+    structured_result: dict[str, Any]
+    accepted_chunks: list[dict[str, Any]]
+    rejected_chunks: list[dict[str, Any]]
+    draft_answer: str
+    validation_result: dict[str, Any]
+    evidence_summary: dict[str, Any]
     selected_tools: list[str]
     # tool_call_count 记录工具节点实际跑了几次，是死循环保护器。
     tool_call_count: int

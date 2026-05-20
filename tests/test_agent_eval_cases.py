@@ -1,7 +1,11 @@
 import unittest
 
 from clothing_rag_demo.agent.agent_executor import run_agent
-from clothing_rag_demo.agent.eval_cases import EVAL_CASES
+from clothing_rag_demo.agent.eval_cases import (
+    EVAL_CASES,
+    case_supports_executor,
+    get_expected_value,
+)
 from clothing_rag_demo.agent.tool_registry import build_default_tool_registry
 
 
@@ -58,6 +62,9 @@ class AgentEvalCaseTests(unittest.TestCase):
         )
 
         for case in EVAL_CASES:
+            if not case_supports_executor(case, "pipeline"):
+                continue
+
             with self.subTest(case=case["name"]):
                 result = run_agent(
                     case["query"],
@@ -68,11 +75,20 @@ class AgentEvalCaseTests(unittest.TestCase):
 
                 debug = result["debug"]
 
-                self.assertEqual(debug["intent_result"]["intent"], case["expected_intent"])
-                self.assertEqual(debug["selected_tools"], case["expected_tools"])
-                self.assertEqual(debug["stop_reason"], case["expected_stop_reason"])
+                self.assertEqual(
+                    debug["intent_result"]["intent"],
+                    get_expected_value(case, "pipeline", "expected_intent"),
+                )
+                self.assertEqual(
+                    debug["selected_tools"],
+                    get_expected_value(case, "pipeline", "expected_tools"),
+                )
+                self.assertEqual(
+                    debug["stop_reason"],
+                    get_expected_value(case, "pipeline", "expected_stop_reason"),
+                )
 
-                if case["requires_rag"]:
+                if get_expected_value(case, "pipeline", "requires_rag"):
                     self.assertGreater(len(debug["retrieved_chunks"]), 0)
                 else:
                     self.assertEqual(len(debug["retrieved_chunks"]), 0)

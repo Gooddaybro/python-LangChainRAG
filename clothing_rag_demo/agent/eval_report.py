@@ -10,7 +10,11 @@ from collections import defaultdict
 from pathlib import Path
 
 from clothing_rag_demo.agent.agent_executor import run_agent
-from clothing_rag_demo.agent.eval_cases import EVAL_CASES
+from clothing_rag_demo.agent.eval_cases import (
+    EVAL_CASES,
+    case_supports_executor,
+    get_expected_value,
+)
 from clothing_rag_demo.agent.langgraph_executor import run_langgraph_agent
 from clothing_rag_demo.agent.tool_registry import build_default_tool_registry
 
@@ -92,11 +96,15 @@ def evaluate_executor_case(case, executor_name, executor_fn, tool_registry, answ
     actual_tools = debug["selected_tools"]
     actual_stop_reason = debug["stop_reason"]
     rag_chunk_count = len(debug["retrieved_chunks"])
-    expected_rag_ok = rag_chunk_count > 0 if case["requires_rag"] else rag_chunk_count == 0
+    expected_intent = get_expected_value(case, executor_name, "expected_intent")
+    expected_tools = get_expected_value(case, executor_name, "expected_tools")
+    expected_stop_reason = get_expected_value(case, executor_name, "expected_stop_reason")
+    requires_rag = get_expected_value(case, executor_name, "requires_rag")
+    expected_rag_ok = rag_chunk_count > 0 if requires_rag else rag_chunk_count == 0
     passed = (
-        actual_intent == case["expected_intent"]
-        and actual_tools == case["expected_tools"]
-        and actual_stop_reason == case["expected_stop_reason"]
+        actual_intent == expected_intent
+        and actual_tools == expected_tools
+        and actual_stop_reason == expected_stop_reason
         and expected_rag_ok
     )
 
@@ -104,21 +112,26 @@ def evaluate_executor_case(case, executor_name, executor_fn, tool_registry, answ
         "case": case["name"],
         "query": case["query"],
         "executor": executor_name,
-        "expected_intent": case["expected_intent"],
+        "expected_intent": expected_intent,
         "actual_intent": actual_intent,
-        "expected_tools": case["expected_tools"],
+        "expected_tools": expected_tools,
         "actual_tools": actual_tools,
-        "expected_stop_reason": case["expected_stop_reason"],
+        "expected_stop_reason": expected_stop_reason,
         "actual_stop_reason": actual_stop_reason,
-        "requires_rag": case["requires_rag"],
+        "requires_rag": requires_rag,
         "rag_chunk_count": rag_chunk_count,
         "passed": passed,
     }
 
 
-def build_consistency_rows(rows):
-    """检查两个 executor 在同一个 case 上是否表现一致。"""
+def build_consistency_rows(rows, cases=None):
+    """检查两个 executor 在同一个 case 上是否表现一致。
+
+    有些 case 是 executor-specific：它们用于描述迁移后的新边界，
+    不再要求旧 pipeline 和 LangGraph 主线完全一致。
+    """
     rows_by_case = defaultdict(list)
+    case_by_name = {case["name"]: case for case in cases or []}
 
     for row in rows:
         rows_by_case[row["case"]].append(row)
@@ -126,11 +139,13 @@ def build_consistency_rows(rows):
     consistency_rows = []
 
     for case_name, case_rows in rows_by_case.items():
+        case = case_by_name.get(case_name, {})
+        executor_specific = bool(case.get("executors") or case.get("expected_by_executor"))
         intents = {row["actual_intent"] for row in case_rows}
         tools = {tuple(row["actual_tools"]) for row in case_rows}
         stop_reasons = {row["actual_stop_reason"] for row in case_rows}
         rag_counts = {row["rag_chunk_count"] for row in case_rows}
-        consistent = (
+        consistent = True if executor_specific else (
             len(intents) == 1
             and len(tools) == 1
             and len(stop_reasons) == 1
@@ -140,6 +155,7 @@ def build_consistency_rows(rows):
             {
                 "case": case_name,
                 "consistent": consistent,
+                "executor_specific": executor_specific,
                 "intent_count": len(intents),
                 "tools_count": len(tools),
                 "stop_reason_count": len(stop_reasons),
@@ -166,6 +182,9 @@ def build_eval_report(
 
     for case in cases:
         for executor_name, executor_fn in executors.items():
+            if not case_supports_executor(case, executor_name):
+                continue
+
             rows.append(
                 evaluate_executor_case(
                     case,
@@ -176,7 +195,7 @@ def build_eval_report(
                 )
             )
 
-    consistency_rows = build_consistency_rows(rows)
+    consistency_rows = build_consistency_rows(rows, cases)
     failed_count = sum(1 for row in rows if not row["passed"])
     inconsistent_case_count = sum(1 for row in consistency_rows if not row["consistent"])
 
