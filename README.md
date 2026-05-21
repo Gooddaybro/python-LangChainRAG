@@ -82,6 +82,7 @@ RAG 只负责颜色搭配、洗涤养护、风格场景这类解释性知识。
 
 详细图结构和节点契约见 `docs/langgraph-flow.md`。
 详细数据边界见 `docs/data-boundary.md`。
+详细评测设计见 `docs/eval-plan.md`。
 
 ## Test
 
