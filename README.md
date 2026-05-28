@@ -54,6 +54,8 @@ uvicorn clothing_rag_demo.api.app:app --reload --port 8001
 - `POST /chat/langgraph`：兼容路径，同样调用 LangGraph 主线 `run_langgraph_agent`。
 
 详细接口契约见 `docs/api-design.md`。
+Java 后端联动契约见 `docs/integration/java-python-chat-contract.md`。
+跨项目架构边界见 `docs/architecture/java-ai-clothing-mall-architecture.md`。
 
 ## Agent Executors
 
