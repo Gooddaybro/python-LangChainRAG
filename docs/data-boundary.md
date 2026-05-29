@@ -25,9 +25,9 @@
 
 | 数据来源 | 当前文件或模块 | 负责内容 | 使用节点 |
 | --- | --- | --- | --- |
-| 商品目录 | `clothing_rag_demo/data/product_catalog.json` | 商品、SKU、价格、库存、颜色、尺码规则 id、政策 id | `structured_lookup` |
-| 商品知识文件 | `clothing_rag_demo/data/*.txt` | 颜色选择、洗涤养护、尺码知识说明 | `rag_retriever` |
-| 向量库 | `clothing_rag_demo/chroma_db/` | 文本 chunk 的向量索引 | `rag_tool` |
+| 商品目录 | `clothing_assistant/data/product_catalog.json` | 商品、SKU、价格、库存、颜色、尺码规则 id、政策 id | `structured_lookup` |
+| 商品知识文件 | `clothing_assistant/data/*.txt` | 颜色选择、洗涤养护、尺码知识说明 | `rag_retriever` |
+| 向量库 | `clothing_assistant/chroma_db/` | 文本 chunk 的向量索引 | `rag_tool` |
 | 请求历史 | API 请求里的 `chat_history` | 当前追问需要的显式历史 | `context_resolver` |
 | LangGraph checkpoint | 当前为 `InMemorySaver` | 按 `thread_id` 保存图执行状态 | LangGraph runtime |
 | trace/debug | `trace_events` 和可选本地 JSONL | 节点路径、工具结果、证据摘要 | `trace_logger` |
@@ -39,7 +39,7 @@
 当前结构化数据文件：
 
 ```text
-clothing_rag_demo/data/product_catalog.json
+clothing_assistant/data/product_catalog.json
 ```
 
 当前商品字段：

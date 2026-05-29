@@ -1,6 +1,6 @@
 import unittest
 
-from clothing_rag_demo.app_qa import (
+from clothing_assistant.app_qa import (
     LANGGRAPH_MODE,
     PIPELINE_MODE,
     build_eval_tables,

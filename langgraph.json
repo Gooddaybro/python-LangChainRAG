@@ -1,9 +1,9 @@
 {
   "dependencies": [
-    "./clothing_rag_demo"
+    "./clothing_assistant"
   ],
   "graphs": {
-    "clothing_assistant": "./clothing_rag_demo/agent/langgraph_executor.py:get_default_langgraph_agent"
+    "clothing_assistant": "./clothing_assistant/agent/langgraph_executor.py:get_default_langgraph_agent"
   },
   "env": "./.env"
 }

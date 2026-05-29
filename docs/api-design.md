@@ -31,12 +31,12 @@ POST /chat/pipeline
 
 ## 2. 运行端口
 
-端口不由 `clothing_rag_demo/api/app.py` 决定，而由启动命令决定。
+端口不由 `clothing_assistant/api/app.py` 决定，而由启动命令决定。
 
 默认启动：
 
 ```powershell
-uvicorn clothing_rag_demo.api.app:app --reload
+uvicorn clothing_assistant.api.app:app --reload
 ```
 
 默认地址：
@@ -48,7 +48,7 @@ http://127.0.0.1:8000
 如果 `8000` 被占用：
 
 ```powershell
-uvicorn clothing_rag_demo.api.app:app --reload --port 8001
+uvicorn clothing_assistant.api.app:app --reload --port 8001
 ```
 
 常用本地入口：
@@ -176,7 +176,7 @@ Debug 字段用于开发、测试、eval 和排查，不建议直接暴露给普
 库存、价格、SKU、颜色列表、尺码规则 id 必须来自结构化数据：
 
 ```text
-clothing_rag_demo/data/product_catalog.json
+clothing_assistant/data/product_catalog.json
 ```
 
 这些问题应该走：

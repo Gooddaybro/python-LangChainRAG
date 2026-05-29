@@ -20,20 +20,20 @@
 ```python
 import unittest
 
-from clothing_rag_demo.agent.agent_executor import build_agent_query
-from clothing_rag_demo.agent.router import (
+from clothing_assistant.agent.agent_executor import build_agent_query
+from clothing_assistant.agent.router import (
     INTENT_POLICY_QA,
     INTENT_SIZE_RECOMMENDATION,
     intent_router,
 )
-from clothing_rag_demo.tools.memory_tool import run_memory_tool
-from clothing_rag_demo.tools.policy_tool import build_no_policy_source_result
-from clothing_rag_demo.tools.size_tool import build_size_query, run_size_tool
+from clothing_assistant.tools.memory_tool import run_memory_tool
+from clothing_assistant.tools.policy_tool import build_no_policy_source_result
+from clothing_assistant.tools.size_tool import build_size_query, run_size_tool
 
 
 class AgentMvpTests(unittest.TestCase):
     def test_package_imports_work_from_repo_root(self):
-        from clothing_rag_demo.agent.agent_executor import run_agent
+        from clothing_assistant.agent.agent_executor import run_agent
 
         self.assertTrue(callable(run_agent))
 
@@ -111,9 +111,9 @@ Create or keep `clothing_rag_demo/__init__.py` with a short package docstring.
 Use package-qualified imports such as:
 
 ```python
-from clothing_rag_demo.agent.router import intent_router
-from clothing_rag_demo.config_data import DEFAULT_TEST_QUERY
-from clothing_rag_demo.tools.size_tool import run_size_tool
+from clothing_assistant.agent.router import intent_router
+from clothing_assistant.config_data import DEFAULT_TEST_QUERY
+from clothing_assistant.tools.size_tool import run_size_tool
 ```
 
 - [ ] **Step 3: Run import test**

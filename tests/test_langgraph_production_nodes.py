@@ -1,7 +1,7 @@
 import unittest
 
-from clothing_rag_demo.agent.langgraph_executor import run_langgraph_agent
-from clothing_rag_demo.agent.tool_registry import build_default_tool_registry
+from clothing_assistant.agent.langgraph_executor import run_langgraph_agent
+from clothing_assistant.agent.tool_registry import build_default_tool_registry
 
 
 def fake_rag_runner(query, query_type=None):

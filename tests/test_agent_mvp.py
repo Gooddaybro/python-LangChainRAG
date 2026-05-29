@@ -1,19 +1,20 @@
+import inspect
 import unittest
 
-from clothing_rag_demo.agent.agent_executor import build_agent_query, build_final_prompt
-from clothing_rag_demo.agent.router import (
+from clothing_assistant.agent.agent_executor import build_agent_query, build_final_prompt
+from clothing_assistant.agent.router import (
     INTENT_POLICY_QA,
     INTENT_SIZE_RECOMMENDATION,
     intent_router,
 )
-from clothing_rag_demo.tools.memory_tool import run_memory_tool
-from clothing_rag_demo.tools.policy_tool import build_no_policy_source_result
-from clothing_rag_demo.tools.size_tool import build_size_query, run_size_tool
+from clothing_assistant.tools.memory_tool import run_memory_tool
+from clothing_assistant.tools.policy_tool import build_no_policy_source_result
+from clothing_assistant.tools.size_tool import build_size_query, run_size_tool
 
 
 class AgentMvpTests(unittest.TestCase):
     def test_package_imports_work_from_repo_root(self):
-        from clothing_rag_demo.agent.agent_executor import run_agent
+        from clothing_assistant.agent.agent_executor import run_agent
 
         self.assertTrue(callable(run_agent))
 
@@ -74,6 +75,19 @@ class AgentMvpTests(unittest.TestCase):
         self.assertEqual(result["match_type"], "mixed")
         self.assertEqual(result["recommended_size"], "M")
         self.assertEqual(result["alternative"], "L")
+
+    def test_domain_size_matching_is_config_free(self):
+        from clothing_assistant.domain import size_matching
+
+        source = inspect.getsource(size_matching)
+        self.assertNotIn("config_data", source)
+        self.assertNotIn("DATA_DIR", source)
+
+        rule = size_matching.parse_size_rule_line("身高：165-175cm， 体重：96-120 斤，建议尺码M。")
+        result = size_matching.match_size_rule("我身高170cm，体重110斤", [rule])
+
+        self.assertTrue(result["matched"])
+        self.assertEqual(result["primary_size"], "M")
 
     def test_final_prompt_tells_model_not_to_recommend_conflicting_sizes(self):
         prompt = build_final_prompt(

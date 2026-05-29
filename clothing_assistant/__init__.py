@@ -1,0 +1,1 @@
+"""Clothing shopping assistant package."""

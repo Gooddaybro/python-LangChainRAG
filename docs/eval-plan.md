@@ -16,8 +16,8 @@
 当前项目已经有确定性评测基础：
 
 ```text
-clothing_rag_demo/agent/eval_cases.py
-clothing_rag_demo/agent/eval_report.py
+clothing_assistant/agent/eval_cases.py
+clothing_assistant/agent/eval_report.py
 tests/test_agent_eval_cases.py
 tests/test_langgraph_shadow.py
 tests/test_langgraph_production_nodes.py
@@ -112,7 +112,7 @@ python -m unittest discover -v
 生成评测报告：
 
 ```powershell
-python -m clothing_rag_demo.agent.eval_report
+python -m clothing_assistant.agent.eval_report
 ```
 
 当前 `eval_report` 使用 fake tools，目的是让评测聚焦于路由、工具选择和停止原因，不受真实向量库、大模型或网络状态影响。
@@ -175,8 +175,8 @@ requires_rag
 建议新增文件：
 
 ```text
-clothing_rag_demo/agent/answer_quality_cases.py
-clothing_rag_demo/agent/answer_quality_report.py
+clothing_assistant/agent/answer_quality_cases.py
+clothing_assistant/agent/answer_quality_report.py
 tests/test_answer_quality_report.py
 ```
 
@@ -237,8 +237,8 @@ LLM judge 不能替代确定性校验。库存、价格、缺信息、工具选�
 建议两个报告分开：
 
 ```text
-python -m clothing_rag_demo.agent.eval_report
-python -m clothing_rag_demo.agent.answer_quality_report
+python -m clothing_assistant.agent.eval_report
+python -m clothing_assistant.agent.answer_quality_report
 ```
 
 确定性报告字段：

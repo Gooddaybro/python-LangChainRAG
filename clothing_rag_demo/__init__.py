@@ -1,1 +1,0 @@
-"""Clothing RAG demo package."""

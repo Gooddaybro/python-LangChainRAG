@@ -1,12 +1,12 @@
 import unittest
 
-from clothing_rag_demo.agent.agent_executor import run_agent
-from clothing_rag_demo.agent.eval_cases import (
+from clothing_assistant.agent.agent_executor import run_agent
+from clothing_assistant.agent.eval_cases import (
     EVAL_CASES,
     case_supports_executor,
     get_expected_value,
 )
-from clothing_rag_demo.agent.tool_registry import build_default_tool_registry
+from clothing_assistant.agent.tool_registry import build_default_tool_registry
 
 
 def fake_rag_runner(query, query_type=None):

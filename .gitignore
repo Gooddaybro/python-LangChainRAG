@@ -7,10 +7,12 @@ __pycache__/
 .idea/
 .vscode/
 
-clothing_rag_demo/chat_history/*.jsonl
-clothing_rag_demo/chroma_db/
-clothing_rag_demo/_chroma_probe/
-clothing_rag_demo/traces/
+clothing_assistant/chat_history/
+clothing_assistant/chroma_db/
+clothing_assistant/_chroma_probe/
+clothing_assistant/_chroma_probe_segment/
+clothing_assistant/traces/
+clothing_assistant/knowledge_file_hashes.json
 
 # 正式设计文档需要进 Git；只忽略本地 agent 计划草稿。
 docs/superpowers/

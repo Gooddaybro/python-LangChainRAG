@@ -1,17 +1,17 @@
 import unittest
 from uuid import uuid4
 
-from clothing_rag_demo.agent.eval_cases import (
+from clothing_assistant.agent.eval_cases import (
     EVAL_CASES,
     case_supports_executor,
     get_expected_value,
 )
-from clothing_rag_demo.agent import nodes
-from clothing_rag_demo.agent.langgraph_executor import (
+from clothing_assistant.agent import nodes
+from clothing_assistant.agent.langgraph_executor import (
     get_default_langgraph_agent,
     run_langgraph_agent,
 )
-from clothing_rag_demo.agent.tool_registry import build_default_tool_registry
+from clothing_assistant.agent.tool_registry import build_default_tool_registry
 
 
 def fake_rag_runner(query, query_type=None):
@@ -105,6 +105,40 @@ class LangGraphShadowTests(unittest.TestCase):
         self.assertIn("run_started", trace_steps)
         self.assertEqual(debug["trace_events"][0]["data"]["thread_id"], "learn-thread")
         self.assertEqual(debug["trace_events"][0]["data"]["run_id"], debug["run_id"])
+
+    def test_response_debug_includes_java_request_context(self):
+        user_context = {
+            "user_id": 10001,
+            "height_cm": 175,
+            "weight_kg": 70,
+            "preferred_styles": ["commute"],
+        }
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "通勤轻薄外套",
+            }
+        ]
+
+        result = run_langgraph_agent(
+            "你是谁？",
+            thread_id="learn-thread-with-context",
+            request_id="req-langgraph-1",
+            session_id="session-langgraph-1",
+            user_context=user_context,
+            candidates=candidates,
+            tool_registry=build_fake_registry(),
+            answer_generator=fake_answer_generator,
+        )
+        debug = result["debug"]
+
+        self.assertEqual(debug["request_id"], "req-langgraph-1")
+        self.assertEqual(debug["session_id"], "session-langgraph-1")
+        self.assertEqual(debug["user_context"], user_context)
+        self.assertEqual(debug["candidates"], candidates)
+        self.assertEqual(debug["trace_events"][0]["data"]["request_id"], "req-langgraph-1")
+        self.assertEqual(debug["trace_events"][0]["data"]["session_id"], "session-langgraph-1")
 
     def test_missing_thread_id_is_generated(self):
         result = run_langgraph_agent(

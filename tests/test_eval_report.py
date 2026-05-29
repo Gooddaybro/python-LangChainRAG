@@ -3,9 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from clothing_rag_demo.agent.eval_cases import EVAL_CASES
-from clothing_rag_demo.agent.eval_cases import get_case_executors
-from clothing_rag_demo.agent.eval_report import (
+from clothing_assistant.agent.eval_cases import EVAL_CASES
+from clothing_assistant.agent.eval_cases import get_case_executors
+from clothing_assistant.agent.eval_report import (
     build_eval_report,
     format_json_report,
     format_markdown_report,

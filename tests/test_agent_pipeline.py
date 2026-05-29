@@ -2,14 +2,16 @@ import os
 import unittest
 from pathlib import Path
 
-from clothing_rag_demo.config_data import BASE_DIR
-from clothing_rag_demo.agent.agent_executor import run_agent
-from clothing_rag_demo.agent.state import AgentState, make_trace
-from clothing_rag_demo.agent.tool_registry import (
+from clothing_assistant.agent import agent_executor
+from clothing_assistant.agent.agent_executor import run_agent
+from clothing_assistant.agent.state import AgentState, make_trace
+from clothing_assistant.agent.tool_registry import (
     build_default_tool_registry,
     matching_tool_names,
 )
-from clothing_rag_demo.agent.tracing import persist_trace_if_enabled
+from clothing_assistant.agent.tracing import persist_trace_if_enabled
+from clothing_assistant.application import answer_service
+from clothing_assistant.config_data import BASE_DIR
 
 
 def fake_rag_runner(query, query_type=None):
@@ -64,6 +66,11 @@ class AgentPipelineTests(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["step"], "route_intent")
         self.assertEqual(events[0]["data"]["intent"], "chat")
+
+    def test_answer_service_is_shared_by_legacy_pipeline(self):
+        self.assertIs(agent_executor.build_final_prompt, answer_service.build_final_prompt)
+        self.assertIs(agent_executor.default_answer_generator, answer_service.default_answer_generator)
+        self.assertIs(agent_executor.build_response_from_state, answer_service.build_response_from_state)
 
     def test_tool_registry_selects_size_and_rag_for_product_size_question(self):
         state: AgentState = {

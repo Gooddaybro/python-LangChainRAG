@@ -2,8 +2,8 @@
 
 面向服装电商客服和导购场景的 AI 助手系统，包含 Streamlit 演示入口和 FastAPI 后端入口。
 
-- `app_file_uploader.py`：上传并重建本地知识库。
-- `app_qa.py`：本地 Agent 调试台，可切换 LangGraph 主线和旧 Pipeline 对照。
+- `ui/app_file_uploader.py`：上传并重建本地知识库。
+- `ui/app_qa.py`：本地 Agent 调试台，可切换 LangGraph 主线和旧 Pipeline 对照。
 
 ## Setup
 
@@ -17,13 +17,13 @@ $env:DASHSCOPE_API_KEY="your-dashscope-api-key"
 先更新知识库：
 
 ```powershell
-streamlit run clothing_rag_demo/app_file_uploader.py
+streamlit run clothing_assistant/ui/app_file_uploader.py
 ```
 
 再打开问答页：
 
 ```powershell
-streamlit run clothing_rag_demo/app_qa.py
+streamlit run clothing_assistant/ui/app_qa.py
 ```
 
 ## FastAPI Backend
@@ -31,7 +31,7 @@ streamlit run clothing_rag_demo/app_qa.py
 项目也提供 FastAPI 后端入口，适合把同一套 Agent 能力暴露给前端、App 或其他系统调用：
 
 ```powershell
-uvicorn clothing_rag_demo.api.app:app --reload
+uvicorn clothing_assistant.api.app:app --reload
 ```
 
 启动后打开接口文档：
@@ -43,7 +43,7 @@ http://127.0.0.1:8000/docs
 如果本机 `8000` 端口已经被其他服务占用，可以改用：
 
 ```powershell
-uvicorn clothing_rag_demo.api.app:app --reload --port 8001
+uvicorn clothing_assistant.api.app:app --reload --port 8001
 ```
 
 当前接口：
@@ -55,12 +55,14 @@ uvicorn clothing_rag_demo.api.app:app --reload --port 8001
 
 详细接口契约见 `docs/api-design.md`。
 Java 后端联动契约见 `docs/integration/java-python-chat-contract.md`。
+Java/Python 接口调整开发文档见 `docs/integration/java-python-chat-interface-development.md`。
+Java/Python 接口调试文档见 `docs/integration/java-python-chat-interface-debugging.md`。
 跨项目架构边界见 `docs/architecture/java-ai-clothing-mall-architecture.md`。
 
 ## Agent Executors
 
-当前主线入口是 `clothing_rag_demo.agent.langgraph_executor.run_langgraph_agent`。
-旧手写 pipeline 保留为 `clothing_rag_demo.agent.agent_executor.run_agent`，
+当前主线入口是 `clothing_assistant.agent.langgraph_executor.run_langgraph_agent`。
+旧手写 pipeline 保留为 `clothing_assistant.agent.agent_executor.run_agent`，
 通过 `/chat/pipeline` 和 Streamlit 工作台中的 `Pipeline 对照` 模式用于行为对照。
 
 LangGraph 主线现在按生产节点边界组织：
@@ -78,7 +80,7 @@ intent_router
 -> trace_logger
 ```
 
-结构化商品事实放在 `clothing_rag_demo/data/product_catalog.json`。
+结构化商品事实放在 `clothing_assistant/data/product_catalog.json`。
 价格、库存、颜色列表、SKU、尺码规则 id 只从这个文件查询；
 RAG 只负责颜色搭配、洗涤养护、风格场景这类解释性知识。
 
@@ -90,7 +92,7 @@ RAG 只负责颜色搭配、洗涤养护、风格场景这类解释性知识。
 
 ```powershell
 python -m unittest discover -v
-python -m compileall -q clothing_rag_demo tests
+python -m compileall -q clothing_assistant tests
 ```
 
 ## Eval Report
@@ -100,7 +102,7 @@ python -m compileall -q clothing_rag_demo tests
 误当成“两个 executor 必须完全一致”。
 
 ```powershell
-python -m clothing_rag_demo.agent.eval_report
+python -m clothing_assistant.agent.eval_report
 ```
 
 ## Local Agent Trace
@@ -110,11 +112,11 @@ To also write local JSONL trace files:
 
 ```powershell
 $env:AGENT_TRACE_TO_FILE="true"
-streamlit run clothing_rag_demo/app_qa.py
+streamlit run clothing_assistant/ui/app_qa.py
 ```
 
-Trace files are written to `clothing_rag_demo/traces/` by default and are ignored by git.
+Trace files are written to `clothing_assistant/traces/` by default and are ignored by git.
 
 ## Notes
 
-`chat_history/`、`chroma_db/` 和 `_chroma_probe/` 是本地运行产物，不提交到版本库。知识文件仍放在 `clothing_rag_demo/data/`。
+`chat_history/`、`chroma_db/` 和 `_chroma_probe/` 是本地运行产物，不提交到版本库。知识文件仍放在 `clothing_assistant/data/`。

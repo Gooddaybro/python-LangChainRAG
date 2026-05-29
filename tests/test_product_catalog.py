@@ -1,6 +1,6 @@
 import unittest
 
-from clothing_rag_demo.tools.product_catalog import (
+from clothing_assistant.tools.product_catalog import (
     load_product_catalog,
     run_structured_lookup,
 )

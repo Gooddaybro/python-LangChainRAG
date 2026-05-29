@@ -23,25 +23,25 @@
 主入口：
 
 ```text
-clothing_rag_demo.agent.langgraph_executor.run_langgraph_agent
+clothing_assistant.agent.langgraph_executor.run_langgraph_agent
 ```
 
 图构造文件：
 
 ```text
-clothing_rag_demo/agent/langgraph_executor.py
+clothing_assistant/agent/langgraph_executor.py
 ```
 
 节点实现文件：
 
 ```text
-clothing_rag_demo/agent/nodes.py
+clothing_assistant/agent/nodes.py
 ```
 
 状态定义文件：
 
 ```text
-clothing_rag_demo/agent/state.py
+clothing_assistant/agent/state.py
 ```
 
 ## 2. 当前图结构
@@ -322,7 +322,7 @@ trace_events
 结构化事实来源：
 
 ```text
-clothing_rag_demo/data/product_catalog.json
+clothing_assistant/data/product_catalog.json
 ```
 
 这里处理的精确事实：
@@ -729,7 +729,7 @@ python -m unittest discover -v
 Eval report:
 
 ```powershell
-python -m clothing_rag_demo.agent.eval_report
+python -m clothing_assistant.agent.eval_report
 ```
 
 ## 8. 当前限制
