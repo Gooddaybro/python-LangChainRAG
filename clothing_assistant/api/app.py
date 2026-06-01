@@ -43,6 +43,23 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+from fastapi.exceptions import RequestValidationError
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    try:
+        body = await request.json()
+    except Exception:
+        body = "Could not parse body"
+    logger.error(f"422 Validation Error on {request.method} {request.url.path}")
+    logger.error(f"Request body: {body}")
+    logger.error(f"Validation errors: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": body},
+    )
+
+
 def build_legacy_chat_response(agent_result, include_debug):
     if include_debug:
         return agent_result
