@@ -4,6 +4,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from clothing_assistant.api.app import app
+from clothing_assistant.api.schemas import PythonChatRequest
 
 
 class ApiTests(unittest.TestCase):
@@ -170,6 +171,65 @@ class ApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 422)
+
+    def test_chat_rejects_blank_request_id(self):
+        response = self.client.post(
+            "/chat",
+            json={
+                "request_id": "   ",
+                "session_id": "session-api-blank-request",
+                "query": "你是谁？",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_chat_rejects_blank_session_id(self):
+        response = self.client.post(
+            "/chat",
+            json={
+                "request_id": "req-api-blank-session",
+                "session_id": "   ",
+                "query": "你是谁？",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_chat_unknown_intent_falls_back_to_unknown(self):
+        fake_result = {
+            "answer": "fake answer",
+            "debug": {"stop_reason": "final_answer"},
+        }
+
+        with patch("clothing_assistant.api.app.run_langgraph_agent", return_value=fake_result):
+            response = self.client.post(
+                "/chat",
+                json={
+                    "request_id": "req-api-unknown-intent",
+                    "session_id": "session-api-unknown-intent",
+                    "query": "你是谁？",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["intent"], "unknown")
+
+    def test_python_chat_request_documents_external_fields(self):
+        external_fields = [
+            "request_id",
+            "session_id",
+            "thread_id",
+            "query",
+            "chat_history",
+            "user_context",
+            "candidates",
+            "debug",
+        ]
+
+        for field_name in external_fields:
+            with self.subTest(field_name=field_name):
+                self.assertTrue(PythonChatRequest.model_fields[field_name].description)
 
     def test_chat_error_response_hides_internal_exception_detail(self):
         with (

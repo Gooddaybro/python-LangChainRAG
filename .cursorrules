@@ -1,0 +1,37 @@
+# AI Clothing Shopping Assistant System Coding Rules
+
+## Python Documentation
+
+- Use Google Style Python Docstrings for modules, classes, and public functions.
+- Every public function must have full type hints for parameters and return values.
+- Public function docstrings must include `Args:` and `Returns:`. Include `Raises:` when the function intentionally raises domain or validation errors.
+- Prefer explaining why a boundary exists over restating what each line does.
+- Do not add comments for obvious assignments, imports, simple loops, or direct return statements.
+
+## Project Boundaries
+
+- Treat `clothing_assistant.agent.langgraph_executor.run_langgraph_agent` as the production Python entrypoint.
+- Keep exact product facts such as inventory, price, SKU, color availability, and size rules grounded in structured data.
+- Use RAG only for explanatory knowledge such as color matching, washing care, style advice, and scenario recommendations.
+- Do not let prompts or LLM output invent inventory, prices, refund policies, or product facts.
+- Keep debug trace data separate from normal user-facing API responses.
+
+## Comments That Matter Here
+
+- Add short comments near complex LangGraph routing, fallback, and validation logic.
+- Explain `AgentState` fields by system responsibility, not by Python type alone.
+- Explain why fake tools or deterministic cases exist in eval modules.
+- When touching ToolRegistry or tool modules, document whether a tool returns exact facts or supporting evidence.
+- Use `Learning:` comments only for short teaching notes that help understand Agent/RAG/LangGraph migration decisions.
+
+## Pydantic and API Schemas
+
+- Every externally visible Pydantic field should use `Field(..., description="...")` unless the model is strictly internal.
+- Validators must explain business constraints through names and error messages.
+- Keep API request and response schemas stable; document compatibility fields rather than silently removing them.
+
+## Tests and Verification
+
+- Add or update tests when changing behavior.
+- Run focused tests for changed modules before broad verification.
+- Do not weaken tests or quality gates just to make a change pass.

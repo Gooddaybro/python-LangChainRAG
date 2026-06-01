@@ -1,0 +1,45 @@
+site_name: AI Clothing Shopping Assistant System
+site_description: Documentation for the Python clothing shopping assistant.
+repo_name: AI Clothing Shopping Assistant System
+
+not_in_nav: |
+  architecture/**
+  contracts/**
+  integration/**
+  superpowers/**
+
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            members_order: source
+
+nav:
+  - 首页: index.md
+  - 开发规范:
+      - 代码注释与文档约束体系: code-documentation-governance.md
+      - 代码注释风格指南: STYLE_GUIDE.md
+  - 架构:
+      - LangGraph 工作流: langgraph-flow.md
+      - 数据边界: data-boundary.md
+      - API 设计: api-design.md
+      - 评测设计: eval-plan.md
+  - API Reference:
+      - 总览: api-reference.md
+      - Agent: api/agent.md
+      - Tools: api/tools.md
+      - HTTP API: api/http.md

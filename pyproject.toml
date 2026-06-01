@@ -1,0 +1,42 @@
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["D"]
+ignore = [
+    # Missing-docstring coverage is enforced by interrogate so the rollout can
+    # use a numeric threshold instead of failing every legacy module at once.
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D107",
+    # Existing Chinese docstrings often use Chinese punctuation. Keep this out
+    # of the first gate so the rollout focuses on useful coverage.
+    "D415",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D"]
+
+[tool.interrogate]
+ignore-init-module = true
+ignore-init-method = true
+ignore-magic = true
+ignore-module = false
+ignore-nested-functions = true
+ignore-nested-classes = true
+ignore-private = false
+ignore-property-decorators = true
+ignore-semiprivate = false
+fail-under = 30
+verbose = 1
+quiet = false
+color = true
+paths = ["clothing_assistant"]
