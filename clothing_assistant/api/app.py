@@ -1,9 +1,11 @@
 import logging
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from clothing_assistant.api.schemas import LegacyChatRequest, PythonChatRequest, PythonChatResponse
+from clothing_assistant.api.streaming import build_error_event, iter_stream_events
 from clothing_assistant.agent.agent_executor import run_agent
 from clothing_assistant.agent.langgraph_executor import run_langgraph_agent
 from clothing_assistant.config_data import PROJECT_API_TITLE
@@ -56,7 +58,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     logger.error(f"Validation errors: {exc.errors()}")
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "body": body},
+        content=jsonable_encoder({"detail": exc.errors(), "body": body}),
     )
 
 
@@ -123,6 +125,38 @@ def chat(request: PythonChatRequest):
         )
 
     return build_contract_chat_response(result, request.request_id, request.debug)
+
+
+def generate_chat_stream(request: PythonChatRequest):
+    """Run the existing LangGraph workflow and emit Python-to-Java SSE events."""
+    try:
+        result = run_langgraph_agent(
+            request.query.strip(),
+            chat_history=request.chat_history_dicts(),
+            thread_id=request.thread_id or request.session_id,
+            request_id=request.request_id,
+            session_id=request.session_id,
+            user_context=request.user_context_dict(),
+            candidates=request.candidate_dicts(),
+        )
+    except Exception:
+        logger.exception("Unhandled exception on POST /chat/stream")
+        yield build_error_event("internal_error", "AI service failed to process the request.")
+        return
+
+    yield from iter_stream_events(result, request.request_id)
+
+
+@app.post("/chat/stream")
+def chat_stream(request: PythonChatRequest):
+        return StreamingResponse(
+            generate_chat_stream(request),
+            media_type="text/event-stream;charset=utf-8",
+            headers={
+                "Cache-Control":"no-cache",
+                "Connection":"keep-alive",
+            },
+        )
 
 
 # 旧手写 pipeline 对照入口，方便和 LangGraph 做行为对比。

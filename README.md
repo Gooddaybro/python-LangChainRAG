@@ -50,6 +50,7 @@ uvicorn clothing_assistant.api.app:app --reload --port 8001
 
 - `GET /health`：健康检查。
 - `POST /chat`：调用 LangGraph 主线 `run_langgraph_agent`。
+- `POST /chat/stream`：按 `..\outfit-project-contract\contracts\assistant-streaming-chat\v1.md` 输出 `token`、`done`、`error` SSE 事件，供 Java 后端流式转发。
 - `POST /chat/pipeline`：调用旧手写 pipeline `run_agent`，用于迁移对照和回归检查。
 - `POST /chat/langgraph`：兼容路径，同样调用 LangGraph 主线 `run_langgraph_agent`。
 
