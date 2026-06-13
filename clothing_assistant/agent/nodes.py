@@ -369,6 +369,38 @@ def build_structured_draft(structured_result):
     return f"{name}{color} {size} 码当前无货。"
 
 
+def build_size_recommendation_draft(state):
+    size_result = state.get("tool_results", {}).get("size_tool") or {}
+    recommended_size = size_result.get("recommended_size")
+
+    if not recommended_size:
+        return None
+
+    reason = size_result.get("reason") or "已根据你的身高体重匹配尺码规则。"
+    measurements = size_result.get("measurements") or {}
+    height_cm = measurements.get("height_cm")
+    weight_jin = measurements.get("weight_jin")
+    measurement_text = "你提供的身高体重"
+
+    if height_cm and weight_jin:
+        measurement_text = f"{height_cm:g}cm、{weight_jin:g}斤"
+
+    matching_candidates = [
+        candidate
+        for candidate in state.get("candidates", [])
+        if str(candidate.get("size", "")).strip().upper() == str(recommended_size).strip().upper()
+    ]
+
+    if matching_candidates:
+        names = "、".join(candidate.get("name", "候选商品") for candidate in matching_candidates[:3])
+        return (
+            f"按 {measurement_text}，建议优先看 {recommended_size} 码。"
+            f"{reason} 当前候选里可以先看：{names}。"
+        )
+
+    return f"按 {measurement_text}，建议优先看 {recommended_size} 码。{reason}"
+
+
 def answer_generator_node(state, answer_generator=None):
     """生成草稿答案，不直接作为最终答案。
 
@@ -377,10 +409,14 @@ def answer_generator_node(state, answer_generator=None):
     answer_generator = answer_generator or default_answer_generator
     structured_result = state.get("structured_result") or {}
     structured_draft = build_structured_draft(structured_result)
+    size_draft = build_size_recommendation_draft(state)
 
     if structured_draft:
         draft_answer = structured_draft
         final_prompt = "structured_lookup draft，不调用大模型。"
+    elif size_draft:
+        draft_answer = size_draft
+        final_prompt = "size_tool draft，不调用大模型。"
     elif state.get("tool_results", {}).get("rag_tool") and not state.get("accepted_chunks"):
         draft_answer = ""
         final_prompt = "retrieval_grader 没有接受的证据，等待 validator 兜底。"

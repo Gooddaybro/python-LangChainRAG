@@ -94,6 +94,7 @@ RECOMMENDATION_KEYWORDS = [
     "导购",
     "挑一件",
     "选一件",
+    "怎么选",
     "买一件",
 ]
 
@@ -133,7 +134,18 @@ def has_measurement_signal(text):
     """判断用户问题里是否出现身高、体重这类尺码强信号。"""
     height_pattern = r"(身高\s*)?\d{2,3}\s*(cm|厘米)"
     weight_pattern = r"(体重\s*)?\d{2,3}\s*(kg|公斤|斤)"
-    return bool(re.search(height_pattern, text)) or bool(re.search(weight_pattern, text))
+    return bool(re.search(height_pattern, text)) or bool(re.search(weight_pattern, text)) or has_bare_measurement_pair(text)
+
+
+def has_bare_measurement_pair(text):
+    """识别“177 130”这类身高 + 体重斤的真实用户省略写法。"""
+    numbers = [float(value) for value in re.findall(r"(?<!\d)(\d{2,3})(?!\d)", text)]
+
+    for first, second in zip(numbers, numbers[1:]):
+        if 140 <= first <= 210 and 70 <= second <= 260:
+            return True
+
+    return False
 
 
 def needs_history(user_query):

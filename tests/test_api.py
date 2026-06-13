@@ -133,6 +133,38 @@ class ApiTests(unittest.TestCase):
             },
         )
 
+    def test_chat_returns_product_refs_from_agent_result(self):
+        product_refs = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "reason": "尺码和场景匹配。",
+                "rank_score": 0.95,
+            }
+        ]
+        fake_result = {
+            "answer": "推荐这件通勤外套。",
+            "product_refs": product_refs,
+            "debug": {
+                "intent_result": {"intent": "recommendation"},
+                "stop_reason": "final_answer",
+            },
+        }
+
+        with patch("clothing_assistant.api.app.run_langgraph_agent", return_value=fake_result):
+            response = self.client.post(
+                "/chat",
+                json={
+                    "request_id": "req-api-product-refs",
+                    "session_id": "session-api-product-refs",
+                    "query": "推荐一件通勤外套",
+                    "debug": False,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["product_refs"], product_refs)
+
     def test_chat_missing_info_adds_follow_up_action(self):
         fake_result = {
             "answer": "想查哪件商品？请补充商品名或 SKU，我再帮你查库存或价格。",

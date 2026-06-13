@@ -34,7 +34,7 @@ def build_stream_done_payload(agent_result: dict[str, Any], request_id: str) -> 
         "request_id": request_id,
         "answer": agent_result.get("answer", ""),
         "intent": get_agent_intent(agent_result),
-        "product_refs": [],
+        "product_refs": agent_result.get("product_refs", []),
     }
 
 

@@ -4,6 +4,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from clothing_assistant.agent.router import INTENT_CHAT, INTENT_UNKNOWN
 from clothing_assistant.agent.tracing import persist_trace_if_enabled
+from clothing_assistant.application.recommendation_service import build_product_refs
 from clothing_assistant.infrastructure.llm_client import get_chat_model
 
 
@@ -163,9 +164,17 @@ def build_agent_response(
 ):
     """统一 Agent 输出契约。"""
     rag_result = tool_results.get("rag_tool") or {}
+    product_refs = build_product_refs(
+        candidates,
+        intent_result,
+        user_query,
+        user_context,
+        tool_results,
+    )
 
     return {
         "answer": answer,
+        "product_refs": product_refs,
         "debug": {
             "user_query": user_query,
             "request_id": request_id,
@@ -174,6 +183,7 @@ def build_agent_response(
             "run_id": run_id,
             "user_context": user_context or {},
             "candidates": candidates or [],
+            "product_refs": product_refs,
             "intent_result": intent_result,
             "selected_tools": selected_tools,
             "used_history": memory_result["used_history"],

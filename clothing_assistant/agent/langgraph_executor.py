@@ -35,7 +35,6 @@ from clothing_assistant.agent.state import AgentState, make_trace
 from clothing_assistant.agent.tool_registry import build_default_tool_registry
 
 
-_DEFAULT_CHECKPOINTER = InMemorySaver()
 _DEFAULT_LANGGRAPH_AGENT = None
 
 
@@ -143,11 +142,11 @@ def build_langgraph_agent(
 
 
 def get_default_langgraph_agent():
-    """Return the cached production graph compiled with an in-memory checkpointer."""
+    """Return the cached production graph compiled without cross-request state."""
     global _DEFAULT_LANGGRAPH_AGENT
 
     if _DEFAULT_LANGGRAPH_AGENT is None:
-        _DEFAULT_LANGGRAPH_AGENT = build_langgraph_agent(checkpointer=_DEFAULT_CHECKPOINTER)
+        _DEFAULT_LANGGRAPH_AGENT = build_langgraph_agent(checkpointer=None)
 
     return _DEFAULT_LANGGRAPH_AGENT
 

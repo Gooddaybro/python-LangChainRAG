@@ -51,6 +51,27 @@ class ChatStreamHelperTests(unittest.TestCase):
             },
         )
 
+    def test_build_stream_done_payload_includes_product_refs(self):
+        product_refs = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "reason": "尺码匹配。",
+                "rank_score": 0.93,
+            }
+        ]
+        agent_result = {
+            "answer": "推荐这件外套。",
+            "product_refs": product_refs,
+            "debug": {
+                "intent_result": {"intent": "recommendation"},
+            },
+        }
+
+        payload = build_stream_done_payload(agent_result, request_id="req-stream-product-refs")
+
+        self.assertEqual(payload["product_refs"], product_refs)
+
 
 def parse_sse_events(body: str) -> list[tuple[str, dict]]:
     events = []

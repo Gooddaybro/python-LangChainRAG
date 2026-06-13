@@ -1,6 +1,10 @@
 import re
 
-from clothing_assistant.size_matcher import has_complete_measurements, match_size_rule
+from clothing_assistant.size_matcher import (
+    extract_user_measurements,
+    has_complete_measurements,
+    match_size_rule,
+)
 
 
 RELAXED_PREFERENCE_KEYWORDS = ["宽松", "松一点", "大一点", "oversize", "宽大"]
@@ -33,6 +37,35 @@ def extract_size_preference(user_query):
 def normalize_measurement_query(user_query):
     """把“175cm 70kg”这类省略写法补成底层规则模块能识别的表达。"""
     normalized_query = user_query
+    height_weight_pair = re.search(
+        r"(?<!\d)(\d{2,3})\s+(\d{2,3})\s*(kg|公斤|斤)(?![a-zA-Z0-9])",
+        normalized_query,
+        re.IGNORECASE,
+    )
+    bare_pair = re.search(r"(?<!\d)(\d{2,3})\s+(\d{2,3})(?!\d)", normalized_query)
+
+    if "身高" not in normalized_query and "体重" not in normalized_query and height_weight_pair:
+        height_value = float(height_weight_pair.group(1))
+        weight_value = float(height_weight_pair.group(2))
+
+        if 140 <= height_value <= 210 and 30 <= weight_value <= 150:
+            return (
+                f"{normalized_query[:height_weight_pair.start()]}"
+                f"身高{height_weight_pair.group(1)}cm "
+                f"体重{height_weight_pair.group(2)}{height_weight_pair.group(3)}"
+                f"{normalized_query[height_weight_pair.end():]}"
+            )
+
+    if "身高" not in normalized_query and "体重" not in normalized_query and bare_pair:
+        height_value = float(bare_pair.group(1))
+        weight_value = float(bare_pair.group(2))
+
+        if 140 <= height_value <= 210 and 70 <= weight_value <= 260:
+            return (
+                f"{normalized_query[:bare_pair.start()]}"
+                f"身高{bare_pair.group(1)}cm 体重{bare_pair.group(2)}斤"
+                f"{normalized_query[bare_pair.end():]}"
+            )
 
     if "身高" not in normalized_query:
         height_match = re.search(r"(\d{2,3})\s*(cm|厘米)", normalized_query, re.IGNORECASE)
@@ -57,6 +90,36 @@ def normalize_measurement_query(user_query):
     return normalized_query
 
 
+def build_measurement_query_from_values(height_cm, weight_value, weight_unit):
+    parts = []
+
+    if height_cm is not None:
+        parts.append(f"身高{height_cm:g}cm")
+
+    if weight_value is not None:
+        unit = weight_unit or "斤"
+        parts.append(f"体重{weight_value:g}{unit}")
+
+    return " ".join(parts)
+
+
+def merge_measurements(current_query, history_query):
+    current_measurements = extract_user_measurements(current_query)
+    history_measurements = extract_user_measurements(history_query) if history_query else {}
+
+    height_cm = current_measurements.get("height_cm")
+    if height_cm is None:
+        height_cm = history_measurements.get("height_cm")
+
+    weight_value = current_measurements.get("raw_weight_value")
+    weight_unit = current_measurements.get("raw_weight_unit")
+    if weight_value is None:
+        weight_value = history_measurements.get("raw_weight_value")
+        weight_unit = history_measurements.get("raw_weight_unit")
+
+    return build_measurement_query_from_values(height_cm, weight_value, weight_unit)
+
+
 def get_next_size(size):
     if size not in SIZE_ORDER:
         return None
@@ -75,7 +138,7 @@ def find_latest_history_user_query_with_measurements(chat_history):
 
     # 只从历史里的用户问题找身高体重，避免助手回答里的尺码规则污染当前工具输入。
     for chat_turn in reversed(chat_history):
-        history_query = chat_turn.get("user_query", "").strip()
+        history_query = normalize_measurement_query(chat_turn.get("user_query", "").strip())
 
         if history_query and has_complete_measurements(history_query):
             return history_query
@@ -94,8 +157,8 @@ def build_size_query(user_query, chat_history=None):
     if not history_query:
         return normalized_user_query
 
-    # 当前问题缺少身高体重时，才用最近一轮用户问题补上下文。
-    return f"{history_query}\n当前追问：{normalized_user_query}"
+    # 当前问题缺少部分身高体重时，只补缺失字段；当前轮新字段必须覆盖历史字段。
+    return merge_measurements(normalized_user_query, history_query)
 
 
 def build_size_tool_result(size_match, size_query, preference):
