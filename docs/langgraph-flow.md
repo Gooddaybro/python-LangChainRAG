@@ -58,7 +58,7 @@ START
 -> policy_fallback
 -> rag_retriever
 -> retrieval_grader
--> answer_generator
+-> answer_generator 或 fallback_answer
 -> answer_validator
 -> trace_logger
 -> END
@@ -90,9 +90,13 @@ flowchart TD
     Policy -->|tool budget exhausted| Budget
 
     Rag --> Grader["retrieval_grader"]
-    Grader --> Generator
+    Grader -->|good| Generator
+    Grader -->|weak / empty| Fallback["fallback_answer"]
     Generator --> Validator["answer_validator"]
-    Validator --> Trace
+    Validator -->|pass| Trace
+    Validator -->|retry| Generator
+    Validator -->|final failure| Fallback
+    Fallback --> Trace
     Budget --> Trace
     Trace --> End([END])
 ```
@@ -121,8 +125,13 @@ flowchart TD
 | `structured_result` | `structured_lookup` | 商品、库存、价格、尺码规则等精确事实 |
 | `accepted_chunks` | `retrieval_grader` | 被接受的 RAG 证据 |
 | `rejected_chunks` | `retrieval_grader` | 被拒绝的弱证据 |
+| `retrieval_route` | `retrieval_grader` | 检索质量路由：`good`、`weak`、`empty` 或 `skipped` |
 | `draft_answer` | `answer_generator` | 草稿答案 |
 | `validation_result` | `answer_validator` | 最终答案是否有证据 |
+| `generation_attempts` | `answer_generator` | 当前回答生成已尝试次数 |
+| `max_generation_attempts` | 初始状态 | 回答生成最大尝试次数 |
+| `validation_feedback` | `answer_validator` | 失败后给下一次生成使用的校验反馈 |
+| `fallback_result` | `fallback_answer` | 兜底类型和原因 |
 | `evidence_summary` | `trace_logger` | 本次运行的证据摘要 |
 
 工具和输出字段：
@@ -452,6 +461,7 @@ retrieval_grader_node
 ```text
 accepted_chunks
 rejected_chunks
+retrieval_route
 tool_results["rag_tool"].retrieved_chunks
 trace_events
 ```
@@ -467,6 +477,18 @@ trace_events
 为什么先用规则评分：
 
 生产级不是所有判断都交给 LLM。确定性规则更容易测试，也更容易解释失败原因。
+
+路由结果：
+
+| `retrieval_route.status` | 下一节点 | 含义 |
+| --- | --- | --- |
+| `good` | `answer_generator` | 至少有一个被接受的 chunk |
+| `weak` | `fallback_answer` | 检索到了 chunk，但全部被拒绝 |
+| `empty` | `fallback_answer` | RAG 没有返回 chunk |
+| `skipped` | `answer_generator` | 没有 RAG 结果，继续按非 RAG 路径处理 |
+
+普通 RAG 弱证据或空证据进入 `fallback_answer`，不进入 `policy_fallback`。
+`policy_fallback` 仅用于 policy intent 与 `policy_tool` 来源处理。
 
 ### 4.9 `answer_generator`
 
@@ -485,6 +507,7 @@ answer_generator_node
 ```text
 draft_answer
 final_prompt
+generation_attempts
 trace_events
 ```
 
@@ -515,6 +538,7 @@ answer_validator_node
 ```text
 answer
 validation_result
+validation_feedback
 stop_reason
 trace_events
 ```
@@ -525,7 +549,33 @@ trace_events
 | --- | --- |
 | structured price/inventory | 只接受来自 `structured_result` 的事实 |
 | RAG has accepted chunks | 接受草稿答案 |
-| RAG has no accepted chunks | 返回保守兜底 |
+| empty draft | 返回可重试失败和 `validation_feedback` |
+| retry exhausted | 进入 `fallback_answer` |
+
+`answer_validator` 不再负责弱检索兜底。弱检索和空检索已在 `retrieval_grader` 之后直接进入 `fallback_answer`。
+
+### 4.11 `fallback_answer`
+
+实现函数：
+
+```text
+fallback_answer_node
+```
+
+目的：
+
+生成保守兜底答案，并保留失败原因，避免无证据硬答。
+
+写入字段：
+
+```text
+answer
+final_prompt
+validation_result
+fallback_result
+stop_reason
+trace_events
+```
 
 弱检索兜底：
 
@@ -533,7 +583,7 @@ trace_events
 当前知识库没有检索到足够可靠的资料，暂时不能给出确定建议。
 ```
 
-### 4.11 `trace_logger`
+### 4.12 `trace_logger`
 
 实现函数：
 
@@ -598,6 +648,22 @@ Trace 落盘仍由 tracing 模块和环境变量控制，不在该节点里强�
 | `stop_reason` exists | `trace_logger` |
 | tool budget exhausted | `tool_budget_exhausted` |
 | otherwise | `answer_generator` |
+
+### 5.5 `retrieval_grader` 之后
+
+| 条件 | 下一节点 |
+| --- | --- |
+| `retrieval_route.status == "good"` | `answer_generator` |
+| `retrieval_route.status in {"weak", "empty"}` | `fallback_answer` |
+| otherwise | `answer_generator` |
+
+### 5.6 `answer_validator` 之后
+
+| 条件 | 下一节点 |
+| --- | --- |
+| `validation_result.grounded == True` | `trace_logger` |
+| retryable and `generation_attempts < max_generation_attempts` | `answer_generator` |
+| otherwise | `fallback_answer` |
 
 ## 6. 示例路径
 
@@ -693,7 +759,9 @@ If RAG returns only weak or unrelated chunks:
 
 ```text
 retrieval_grader accepted_chunks = []
-answer_validator stop_reason = "answer_fallback"
+retrieval_route.status = "weak"
+-> fallback_answer
+stop_reason = "answer_fallback"
 ```
 
 ## 7. 测试策略

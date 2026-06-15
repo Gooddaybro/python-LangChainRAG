@@ -130,7 +130,7 @@ retrieval_grader
 
 - 分数高于阈值的 chunk 会被拒绝。
 - 来源文件不符合 `query_type` 的 chunk 会被拒绝。
-- 没有 `accepted_chunks` 时，`answer_validator` 必须保守兜底。
+- 没有 `accepted_chunks` 时，`retrieval_grader` 之后直接进入 `fallback_answer` 保守兜底。
 
 ## 5. Memory 边界
 
@@ -207,7 +207,7 @@ debug 不应该长期公开给普通用户，因为它可能暴露：
 | 缺商品 | `missing_info_gate` 追问商品名或 SKU | 不猜商品 |
 | 缺颜色/尺码 | `missing_info_gate` 追问颜色或尺码 | 不猜库存 |
 | 价格查询无商品 | `missing_info_gate` 追问商品 | 不返回模糊价格 |
-| RAG 弱证据 | `answer_validator` 保守兜底 | 不编造解释 |
+| RAG 弱证据 | `fallback_answer` 保守兜底 | 不编造解释 |
 | 政策无来源 | `policy_fallback` 引导人工确认 | 不编造售后规则 |
 | 无法识别意图 | `direct_answer_gate` 引导补充范围 | 不进入工具链 |
 

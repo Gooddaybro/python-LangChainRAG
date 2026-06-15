@@ -8,7 +8,10 @@ from clothing_assistant.agent.eval_cases import (
 )
 from clothing_assistant.agent import nodes
 from clothing_assistant.agent.langgraph_executor import (
+    build_initial_state,
+    build_run_state_defaults,
     get_default_langgraph_agent,
+    resolve_thread_id,
     run_langgraph_agent,
 )
 from clothing_assistant.agent.tool_registry import build_default_tool_registry
@@ -58,6 +61,17 @@ def fake_answer_generator(state):
     return f"langgraph answer for {state['intent_result']['intent']}", "langgraph prompt"
 
 
+def empty_then_valid_answer_generator(state):
+    if state.get("generation_attempts", 0) == 0:
+        return "", "empty first draft"
+
+    return "根据资料，日常通勤可以优先选择低饱和颜色。", "retry prompt"
+
+
+def always_empty_answer_generator(state):
+    return "", "always empty draft"
+
+
 def build_fake_registry():
     return build_default_tool_registry(
         rag_runner=fake_rag_runner,
@@ -83,12 +97,49 @@ class LangGraphShadowTests(unittest.TestCase):
     def test_default_langgraph_agent_persists_checkpoints_by_thread_id(self):
         thread_id = f"test-thread-{uuid4()}"
 
-        result = run_langgraph_agent("你是谁？", thread_id=thread_id)
+        result = run_langgraph_agent("你是谁？", thread_id=thread_id, use_cached_graph=True)
         graph = get_default_langgraph_agent()
         history = list(graph.get_state_history({"configurable": {"thread_id": thread_id}}))
 
         self.assertEqual(result["debug"]["thread_id"], thread_id)
         self.assertGreater(len(history), 0)
+
+    def test_resolve_thread_id_prefers_explicit_thread_id(self):
+        self.assertEqual(resolve_thread_id(thread_id="thread-explicit", session_id="session-fallback"), "thread-explicit")
+
+    def test_resolve_thread_id_falls_back_to_session_id(self):
+        self.assertEqual(resolve_thread_id(thread_id=None, session_id="session-only"), "session-only")
+
+    def test_run_langgraph_agent_uses_session_id_when_thread_id_missing(self):
+        result = run_langgraph_agent(
+            "你是谁？",
+            session_id="session-direct-call",
+            tool_registry=build_fake_registry(),
+            answer_generator=fake_answer_generator,
+        )
+
+        self.assertEqual(result["debug"]["thread_id"], "session-direct-call")
+
+    def test_default_cached_graph_is_not_used_by_request_scoped_runs(self):
+        thread_id = f"request-scoped-{uuid4()}"
+
+        run_langgraph_agent("你是谁？", thread_id=thread_id)
+        graph = get_default_langgraph_agent()
+
+        history = list(graph.get_state_history({"configurable": {"thread_id": thread_id}}))
+        self.assertEqual(history, [])
+
+    def test_build_initial_state_contains_run_state_defaults(self):
+        defaults = build_run_state_defaults()
+        state = build_initial_state(
+            "你是谁？",
+            chat_history=[],
+            thread_id="thread-defaults",
+            run_id="run-defaults",
+        )
+
+        for key in defaults:
+            self.assertIn(key, state)
 
     def test_response_debug_includes_thread_and_run_ids(self):
         result = run_langgraph_agent(
@@ -181,6 +232,37 @@ class LangGraphShadowTests(unittest.TestCase):
         self.assertEqual(result["debug"]["selected_tools"], ["rag_tool"])
         self.assertEqual(result["debug"]["stop_reason"], "final_answer")
         self.assertGreater(len(result["debug"]["retrieved_chunks"]), 0)
+
+    def test_answer_validator_retries_once_for_empty_draft(self):
+        result = run_langgraph_agent(
+            "日常通勤推荐什么颜色？",
+            tool_registry=build_fake_registry(),
+            answer_generator=empty_then_valid_answer_generator,
+        )
+        debug = result["debug"]
+        trace_steps = [event["step"] for event in debug["trace_events"]]
+
+        self.assertEqual(debug["stop_reason"], "final_answer")
+        self.assertEqual(debug["generation_attempts"], 2)
+        self.assertEqual(debug["validation_result"]["grounded"], True)
+        self.assertIn("日常通勤", result["answer"])
+        self.assertGreaterEqual(trace_steps.count("answer_generated"), 2)
+        self.assertGreaterEqual(trace_steps.count("answer_validated"), 2)
+
+    def test_answer_validator_falls_back_after_retry_limit(self):
+        result = run_langgraph_agent(
+            "日常通勤推荐什么颜色？",
+            tool_registry=build_fake_registry(),
+            answer_generator=always_empty_answer_generator,
+        )
+        debug = result["debug"]
+        trace_steps = [event["step"] for event in debug["trace_events"]]
+
+        self.assertEqual(debug["stop_reason"], "answer_fallback")
+        self.assertEqual(debug["generation_attempts"], 2)
+        self.assertEqual(debug["validation_result"]["grounded"], False)
+        self.assertEqual(debug["validation_result"]["reason"], "empty_draft_answer")
+        self.assertIn("fallback_answer", trace_steps)
 
     def test_langgraph_records_tool_call_count(self):
         result = run_langgraph_agent(

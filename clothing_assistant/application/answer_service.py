@@ -131,8 +131,12 @@ def build_response_from_state(state, trace_events=None):
         structured_result=state.get("structured_result", {}),
         accepted_chunks=state.get("accepted_chunks", []),
         rejected_chunks=state.get("rejected_chunks", []),
+        retrieval_route=state.get("retrieval_route", {}),
         draft_answer=state.get("draft_answer", ""),
         validation_result=state.get("validation_result", {}),
+        generation_attempts=state.get("generation_attempts", 0),
+        validation_feedback=state.get("validation_feedback", ""),
+        fallback_result=state.get("fallback_result", {}),
         evidence_summary=state.get("evidence_summary", {}),
     )
 
@@ -158,8 +162,12 @@ def build_agent_response(
         structured_result=None,
         accepted_chunks=None,
         rejected_chunks=None,
+        retrieval_route=None,
         draft_answer=None,
         validation_result=None,
+        generation_attempts=0,
+        validation_feedback=None,
+        fallback_result=None,
         evidence_summary=None,
 ):
     """统一 Agent 输出契约。"""
@@ -194,8 +202,12 @@ def build_agent_response(
             "structured_result": structured_result or {},
             "accepted_chunks": accepted_chunks or [],
             "rejected_chunks": rejected_chunks or [],
+            "retrieval_route": retrieval_route or {},
             "draft_answer": draft_answer or "",
             "validation_result": validation_result or {},
+            "generation_attempts": generation_attempts,
+            "validation_feedback": validation_feedback or "",
+            "fallback_result": fallback_result or {},
             "evidence_summary": evidence_summary or {},
             "tool_results": tool_results,
             "tool_call_count": tool_call_count,

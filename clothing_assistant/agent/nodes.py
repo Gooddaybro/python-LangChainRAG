@@ -313,10 +313,17 @@ def retrieval_grader_node(state):
     rag_result = state.get("tool_results", {}).get("rag_tool")
 
     if not rag_result:
+        retrieval_route = {
+            "status": "skipped",
+            "reason": "rag_result_missing",
+            "accepted_count": 0,
+            "rejected_count": 0,
+        }
         return {
             "accepted_chunks": [],
             "rejected_chunks": [],
-            "trace_events": make_trace("retrieval_grader", skipped=True),
+            "retrieval_route": retrieval_route,
+            "trace_events": make_trace("retrieval_grader", skipped=True, retrieval_route=retrieval_route),
         }
 
     query_type = state["intent_result"]["query_type"]
@@ -328,16 +335,71 @@ def retrieval_grader_node(state):
     graded_rag_result["retrieved_chunks"] = accepted_chunks
     graded_rag_result["source_count"] = len(accepted_chunks)
     tool_results["rag_tool"] = graded_rag_result
+    if accepted_chunks:
+        status = "good"
+        reason = "accepted_chunks_available"
+    elif chunks:
+        status = "weak"
+        reason = "all_retrieved_chunks_rejected"
+    else:
+        status = "empty"
+        reason = "retrieved_chunks_empty"
+    retrieval_route = {
+        "status": status,
+        "reason": reason,
+        "accepted_count": len(accepted_chunks),
+        "rejected_count": len(rejected_chunks),
+    }
 
     return {
         "accepted_chunks": accepted_chunks,
         "rejected_chunks": rejected_chunks,
         "tool_results": tool_results,
+        "retrieval_route": retrieval_route,
         "trace_events": make_trace(
             "retrieval_grader",
             accepted_count=len(accepted_chunks),
             rejected_count=len(rejected_chunks),
+            retrieval_route=retrieval_route,
         ),
+    }
+
+
+def fallback_answer_node(state):
+    retrieval_route = state.get("retrieval_route") or {}
+    validation_result = state.get("validation_result") or {}
+
+    if retrieval_route.get("status") in {"weak", "empty"}:
+        answer = (
+            "当前知识库没有检索到足够可靠的资料，暂时不能给出确定建议。"
+            "你可以补充商品名、场景或联系人工客服确认。"
+        )
+        fallback_result = {
+            "kind": "retrieval_fallback",
+            "reason": retrieval_route.get("reason", "no accepted retrieval evidence"),
+        }
+        validation_result = {
+            "grounded": False,
+            "retryable": False,
+            "reason": "no accepted retrieval evidence",
+        }
+    else:
+        answer = (
+            "当前回答没有通过证据校验，暂时不能给出确定结论。"
+            "你可以补充商品、尺码、场景或联系人工客服确认。"
+        )
+        fallback_result = {
+            "kind": "validation_fallback",
+            "reason": validation_result.get("reason", "answer validation failed"),
+        }
+
+    return {
+        "answer": answer,
+        "final_prompt": fallback_result["kind"],
+        "validation_result": validation_result,
+        "fallback_result": fallback_result,
+        "stop_reason": "answer_fallback",
+        "trace_events": make_trace("fallback_answer", fallback_result=fallback_result),
     }
 
 
@@ -407,6 +469,7 @@ def answer_generator_node(state, answer_generator=None):
     Learning: 生产图里 generator 只负责 draft，最终是否可用交给 validator。
     """
     answer_generator = answer_generator or default_answer_generator
+    generation_attempts = state.get("generation_attempts", 0) + 1
     structured_result = state.get("structured_result") or {}
     structured_draft = build_structured_draft(structured_result)
     size_draft = build_size_recommendation_draft(state)
@@ -419,14 +482,23 @@ def answer_generator_node(state, answer_generator=None):
         final_prompt = "size_tool draft，不调用大模型。"
     elif state.get("tool_results", {}).get("rag_tool") and not state.get("accepted_chunks"):
         draft_answer = ""
-        final_prompt = "retrieval_grader 没有接受的证据，等待 validator 兜底。"
+        final_prompt = "retrieval_grader 没有接受的证据，等待后续兜底。"
     else:
-        draft_answer, final_prompt = answer_generator(state)
+        generator_state = dict(state)
+        generator_state["generation_attempts"] = generation_attempts - 1
+        generator_state["validation_feedback"] = state.get("validation_feedback", "")
+        draft_answer, final_prompt = answer_generator(generator_state)
 
     return {
         "draft_answer": draft_answer,
         "final_prompt": final_prompt,
-        "trace_events": make_trace("answer_generated", draft=True),
+        "generation_attempts": generation_attempts,
+        "trace_events": make_trace(
+            "answer_generated",
+            draft=True,
+            generation_attempts=generation_attempts,
+            validation_feedback=state.get("validation_feedback", ""),
+        ),
     }
 
 
@@ -438,6 +510,7 @@ def answer_validator_node(state):
     structured_result = state.get("structured_result") or {}
     validation_result = {
         "grounded": True,
+        "retryable": False,
         "reason": "draft accepted",
     }
 
@@ -451,10 +524,29 @@ def answer_validator_node(state):
             "trace_events": make_trace("answer_validated", grounded=True, source="structured_lookup"),
         }
 
+    draft_answer = state.get("draft_answer", "")
+    if not draft_answer.strip():
+        validation_result = {
+            "grounded": False,
+            "retryable": True,
+            "reason": "empty_draft_answer",
+        }
+        return {
+            "validation_result": validation_result,
+            "validation_feedback": "上一版回答为空，请基于已接受证据生成保守回答。",
+            "trace_events": make_trace(
+                "answer_validated",
+                grounded=False,
+                retryable=True,
+                reason="empty_draft_answer",
+            ),
+        }
+
     if state.get("tool_results", {}).get("rag_tool") and not state.get("accepted_chunks"):
         answer = "当前知识库没有检索到足够可靠的资料，暂时不能给出确定建议。你可以补充商品名、场景或联系人工客服确认。"
         validation_result = {
             "grounded": False,
+            "retryable": False,
             "reason": "no accepted retrieval evidence",
         }
         return {
@@ -607,3 +699,27 @@ def route_after_policy_fallback(state, max_tool_calls=3):
         return "budget_exhausted"
 
     return "answer_generator"
+
+
+def route_after_retrieval_grader(state):
+    status = (state.get("retrieval_route") or {}).get("status")
+
+    if status == "good":
+        return "answer_generator"
+
+    if status in {"weak", "empty"}:
+        return "fallback_answer"
+
+    return "answer_generator"
+
+
+def route_after_answer_validator(state):
+    validation_result = state.get("validation_result") or {}
+
+    if validation_result.get("grounded"):
+        return "trace_logger"
+
+    if validation_result.get("retryable") and state.get("generation_attempts", 0) < state.get("max_generation_attempts", 2):
+        return "answer_generator"
+
+    return "fallback_answer"

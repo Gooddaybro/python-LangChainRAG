@@ -34,6 +34,14 @@ def weak_rag_runner(query, query_type=None):
     }
 
 
+def empty_rag_runner(query, query_type=None):
+    return {
+        "retrieval_query": query,
+        "retrieved_chunks": [],
+        "source_count": 0,
+    }
+
+
 def fake_policy_runner(query):
     return {
         "has_policy_source": False,
@@ -120,6 +128,7 @@ class LangGraphProductionNodeTests(unittest.TestCase):
 
         self.assertEqual(debug["selected_tools"], ["rag_tool"])
         self.assertEqual(len(debug["accepted_chunks"]), 1)
+        self.assertEqual(debug["retrieval_route"]["status"], "good")
         self.assertEqual(debug["stop_reason"], "final_answer")
 
     def test_weak_retrieval_is_rejected_before_final_answer(self):
@@ -129,11 +138,33 @@ class LangGraphProductionNodeTests(unittest.TestCase):
             answer_generator=fake_answer_generator,
         )
         debug = result["debug"]
+        trace_steps = [event["step"] for event in debug["trace_events"]]
 
         self.assertEqual(debug["selected_tools"], ["rag_tool"])
         self.assertEqual(debug["accepted_chunks"], [])
+        self.assertEqual(debug["retrieval_route"]["status"], "weak")
         self.assertEqual(debug["stop_reason"], "answer_fallback")
         self.assertIn("没有检索到足够可靠", result["answer"])
+        self.assertIn("retrieval_grader", trace_steps)
+        self.assertIn("fallback_answer", trace_steps)
+        self.assertNotIn("answer_generated", trace_steps)
+
+    def test_empty_retrieval_routes_to_fallback_answer(self):
+        result = run_langgraph_agent(
+            "日常通勤推荐什么颜色？",
+            tool_registry=build_registry(rag_runner=empty_rag_runner),
+            answer_generator=fake_answer_generator,
+        )
+        debug = result["debug"]
+        trace_steps = [event["step"] for event in debug["trace_events"]]
+
+        self.assertEqual(debug["selected_tools"], ["rag_tool"])
+        self.assertEqual(debug["accepted_chunks"], [])
+        self.assertEqual(debug["rejected_chunks"], [])
+        self.assertEqual(debug["retrieval_route"]["status"], "empty")
+        self.assertEqual(debug["stop_reason"], "answer_fallback")
+        self.assertIn("fallback_answer", trace_steps)
+        self.assertNotIn("answer_generated", trace_steps)
 
 
 if __name__ == "__main__":

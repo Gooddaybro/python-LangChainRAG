@@ -36,8 +36,13 @@ class AgentState(TypedDict, total=False):
     structured_result: dict[str, Any]
     accepted_chunks: list[dict[str, Any]]
     rejected_chunks: list[dict[str, Any]]
+    retrieval_route: dict[str, Any]
     draft_answer: str
     validation_result: dict[str, Any]
+    generation_attempts: int
+    max_generation_attempts: int
+    validation_feedback: str
+    fallback_result: dict[str, Any]
     evidence_summary: dict[str, Any]
     selected_tools: list[str]
     # tool_call_count 记录工具节点实际跑了几次，是死循环保护器。

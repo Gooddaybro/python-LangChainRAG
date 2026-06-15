@@ -17,14 +17,17 @@ from clothing_assistant.agent.nodes import (
     answer_generator_node,
     answer_validator_node,
     direct_answer_node,
+    fallback_answer_node,
     missing_info_gate_node,
     policy_fallback_node,
     rag_retriever_node,
     resolve_memory_node,
     retrieval_grader_node,
+    route_after_answer_validator,
     route_after_direct_answer,
     route_after_missing_info,
     route_after_policy_fallback,
+    route_after_retrieval_grader,
     route_after_structured_lookup,
     route_intent_node,
     structured_lookup_node,
@@ -44,6 +47,16 @@ def generate_thread_id():
 
 def generate_run_id():
     return f"run-{uuid4()}"
+
+
+def resolve_thread_id(thread_id=None, session_id=None):
+    if thread_id:
+        return thread_id
+
+    if session_id:
+        return session_id
+
+    return generate_thread_id()
 
 
 def build_graph_invoke_config(thread_id):
@@ -75,6 +88,7 @@ def build_langgraph_agent(
         lambda state: rag_retriever_node(state, registry=registry, max_tool_calls=max_tool_calls),
     )
     graph.add_node("retrieval_grader", retrieval_grader_node)
+    graph.add_node("fallback_answer", fallback_answer_node)
     graph.add_node(
         "answer_generator",
         lambda state: answer_generator_node(state, answer_generator=answer_generator),
@@ -132,9 +146,25 @@ def build_langgraph_agent(
         },
     )
     graph.add_edge("rag_retriever", "retrieval_grader")
-    graph.add_edge("retrieval_grader", "answer_generator")
+    graph.add_conditional_edges(
+        "retrieval_grader",
+        route_after_retrieval_grader,
+        {
+            "answer_generator": "answer_generator",
+            "fallback_answer": "fallback_answer",
+        },
+    )
     graph.add_edge("answer_generator", "answer_validator")
-    graph.add_edge("answer_validator", "trace_logger")
+    graph.add_conditional_edges(
+        "answer_validator",
+        route_after_answer_validator,
+        {
+            "trace_logger": "trace_logger",
+            "answer_generator": "answer_generator",
+            "fallback_answer": "fallback_answer",
+        },
+    )
+    graph.add_edge("fallback_answer", "trace_logger")
     graph.add_edge("tool_budget_exhausted", "trace_logger")
     graph.add_edge("trace_logger", END)
 
@@ -142,17 +172,43 @@ def build_langgraph_agent(
 
 
 def get_default_langgraph_agent():
-    """Return the cached production graph compiled without cross-request state."""
+    """Return the cached graph with local checkpoint history for debug replay."""
     global _DEFAULT_LANGGRAPH_AGENT
 
     if _DEFAULT_LANGGRAPH_AGENT is None:
-        _DEFAULT_LANGGRAPH_AGENT = build_langgraph_agent(checkpointer=None)
+        _DEFAULT_LANGGRAPH_AGENT = build_langgraph_agent(checkpointer=InMemorySaver())
 
     return _DEFAULT_LANGGRAPH_AGENT
 
 
 def should_use_default_graph(tool_registry, answer_generator, max_tool_calls):
     return tool_registry is None and answer_generator is None and max_tool_calls == 3
+
+
+def build_run_state_defaults():
+    return {
+        "intent_result": {},
+        "memory_result": {},
+        "agent_query": "",
+        "missing_info_result": {},
+        "structured_result": {},
+        "accepted_chunks": [],
+        "rejected_chunks": [],
+        "retrieval_route": {},
+        "draft_answer": "",
+        "validation_result": {},
+        "fallback_result": {},
+        "evidence_summary": {},
+        "selected_tools": [],
+        "tool_call_count": 0,
+        "tool_results": {},
+        "generation_attempts": 0,
+        "max_generation_attempts": 2,
+        "validation_feedback": "",
+        "answer": "",
+        "final_prompt": "",
+        "stop_reason": "",
+    }
 
 
 def build_initial_state(
@@ -166,6 +222,7 @@ def build_initial_state(
     candidates=None,
 ):
     return {
+        **build_run_state_defaults(),
         "user_query": user_query,
         "chat_history": chat_history or [],
         "request_id": request_id,
@@ -174,9 +231,6 @@ def build_initial_state(
         "run_id": run_id,
         "user_context": user_context or {},
         "candidates": candidates or [],
-        "selected_tools": [],
-        "tool_call_count": 0,
-        "tool_results": {},
         "trace_events": make_trace(
             "run_started",
             request_id=request_id,
@@ -212,12 +266,13 @@ def run_langgraph_agent(
     session_id=None,
     user_context=None,
     candidates=None,
+    use_cached_graph=False,
 ):
     """Run the LangGraph assistant and return the stable Agent response shape."""
-    resolved_thread_id = thread_id or generate_thread_id()
+    resolved_thread_id = resolve_thread_id(thread_id=thread_id, session_id=session_id)
     run_id = generate_run_id()
 
-    if should_use_default_graph(tool_registry, answer_generator, max_tool_calls):
+    if use_cached_graph and should_use_default_graph(tool_registry, answer_generator, max_tool_calls):
         graph = get_default_langgraph_agent()
     else:
         graph = build_langgraph_agent(

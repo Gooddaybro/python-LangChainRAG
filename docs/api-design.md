@@ -212,7 +212,9 @@ structured_lookup
 颜色搭配、洗涤养护、风格场景、季节适配属于解释性知识，应该走：
 
 ```text
-rag_retriever -> retrieval_grader -> answer_generator -> answer_validator
+rag_retriever -> retrieval_grader
+  -> good -> answer_generator -> answer_validator
+  -> weak/empty -> fallback_answer
 ```
 
 示例：
