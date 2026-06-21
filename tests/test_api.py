@@ -216,6 +216,58 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
 
+    def test_chat_validation_error_does_not_echo_sensitive_body(self):
+        response = self.client.post(
+            "/chat",
+            json={
+                "request_id": "req-api-sensitive-validation",
+                "session_id": "session-api-sensitive-validation",
+                "query": "   ",
+                "user_context": {
+                    "user_id": 10001,
+                    "preferred_colors": ["secret-color"],
+                },
+                "candidates": [
+                    {
+                        "spu_id": 1002,
+                        "sku_id": 2101,
+                        "name": "secret candidate",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["body"], {"request_id": "req-api-sensitive-validation"})
+        self.assertNotIn("secret-color", response.text)
+        self.assertNotIn("secret candidate", response.text)
+
+    def test_chat_missing_field_validation_does_not_echo_sensitive_body(self):
+        response = self.client.post(
+            "/chat",
+            json={
+                "request_id": "req-api-sensitive-missing-field",
+                "query": "推荐一件外套",
+                "user_context": {
+                    "user_id": 10001,
+                    "preferred_colors": ["secret-color"],
+                },
+                "candidates": [
+                    {
+                        "spu_id": 1002,
+                        "sku_id": 2101,
+                        "name": "secret candidate",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["body"], {"request_id": "req-api-sensitive-missing-field"})
+        self.assertNotIn("input", response.json()["detail"][0])
+        self.assertNotIn("secret-color", response.text)
+        self.assertNotIn("secret candidate", response.text)
+
     def test_chat_rejects_blank_session_id(self):
         response = self.client.post(
             "/chat",

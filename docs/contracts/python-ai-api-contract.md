@@ -35,6 +35,19 @@ v1 不覆盖：
 
 Python 项目只实现 Python -> Java 的 `token`、`done`、`error` 事件；Java -> 前端的 `meta`、`token`、`done`、`error` 转发由 Java 后端实现。
 
+2026-06-19 本地回归补充：
+
+- `/chat/stream` 的 `data:` 行必须保持单行 JSON。
+- `done` 事件可以返回 `product_refs`，但不得暴露 `debug`、`trace_events`、`selected_tools` 等内部调试字段。
+- Python 生成 `product_refs` 时必须跳过候选池外、缺少 `spu_id`/`sku_id`、以及重复的候选引用。
+- `product_refs[*].reason` 必须来自允许的候选或用户上下文证据，例如库存、尺码、风格/季节/场景、预算或颜色偏好。
+
+验证命令：
+
+```bash
+.venv/bin/python -m unittest tests.test_chat_stream tests.test_recommendation_service -v
+```
+
 ## 2. Endpoint
 
 ```text
@@ -86,7 +99,7 @@ Java 生产调用只接入 `/chat`。`/chat/pipeline` 和 `/chat/langgraph` 属�
       "fit_type": "regular",
       "season": ["autumn"],
       "style_tags": ["commute"],
-      "main_image_url": "/images/products/jacket-commute-main.jpg"
+      "main_image_url": "/images/products/jacket-commute-main.svg"
     }
   ],
   "debug": false
@@ -183,7 +196,7 @@ Java 生产调用只接入 `/chat`。`/chat/pipeline` 和 `/chat/langgraph` 属�
   "fit_type": "regular",
   "season": ["autumn"],
   "style_tags": ["commute"],
-  "main_image_url": "/images/products/jacket-commute-main.jpg"
+  "main_image_url": "/images/products/jacket-commute-main.svg"
 }
 ```
 
@@ -251,12 +264,13 @@ Java 生产调用只接入 `/chat`。`/chat/pipeline` 和 `/chat/langgraph` 属�
 | --- | --- | --- | --- |
 | `spu_id` | number/string | 是 | Java SPU id。Python 不得编造候选池之外的 id。 |
 | `sku_id` | number/string | 是 | Java SKU id。Python 不得编造候选池之外的 id。 |
-| `reason` | string | 是 | 推荐理由，供 Java 保存和前端展示。 |
+| `reason` | string | 是 | 推荐理由，供 Java 保存和前端展示；必须能追溯到候选商品或用户上下文，不能编造价格、库存、折扣或政策。 |
 | `rank_score` | number/null | 否 | Python 排序分，值越大优先级越高。 |
 
 规则：
 
 - 推荐项必须来自请求里的 `candidates`。
+- 推荐理由可使用候选商品库存、尺码、颜色、价格、季节、风格标签、用户预算和用户颜色偏好等已知事实。
 - 推荐项按推荐优先级从高到低排序。
 
 ## 9. SuggestedAction
@@ -355,6 +369,7 @@ Java 生产调用只接入 `/chat`。`/chat/pipeline` 和 `/chat/langgraph` 属�
 - 如果无法解析 `request_id`，`500` 错误响应里的 `request_id` 返回 `null`。
 - 生产环境错误响应不能暴露 prompt、堆栈、密钥、内部路径或原始模型返回。
 - 业务降级不要使用 `500`。
+- `422` 参数校验错误不得回显完整请求 body 或 Pydantic `input` 原始值；可以返回字段位置、错误类型、错误消息和安全的 `request_id`。
 
 ## 13. 版本规则
 

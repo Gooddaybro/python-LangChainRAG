@@ -71,6 +71,7 @@ class ChatStreamHelperTests(unittest.TestCase):
         payload = build_stream_done_payload(agent_result, request_id="req-stream-product-refs")
 
         self.assertEqual(payload["product_refs"], product_refs)
+        self.assertNotIn("debug", payload)
 
 
 def parse_sse_events(body: str) -> list[tuple[str, dict]]:
@@ -141,6 +142,51 @@ class ChatStreamEndpointTests(unittest.TestCase):
             user_context={"user_id": 10001, "height_cm": 175.0, "weight_kg": 70.0},
             candidates=[],
         )
+
+    def test_chat_stream_done_event_does_not_expose_debug_payload(self):
+        fake_result = {
+            "answer": "推荐这件通勤外套。",
+            "product_refs": [
+                {
+                    "spu_id": 1001,
+                    "sku_id": 2001,
+                    "reason": "候选商品匹配通勤场景。",
+                    "rank_score": 0.8,
+                }
+            ],
+            "debug": {
+                "intent_result": {"intent": "recommendation"},
+                "trace_events": [{"step": "run_started"}],
+                "selected_tools": ["rag_tool"],
+            },
+        }
+
+        with patch(
+            "clothing_assistant.api.app.run_langgraph_agent",
+            return_value=fake_result,
+        ):
+            with self.client.stream(
+                "POST",
+                "/chat/stream",
+                json={
+                    "request_id": "req-stream-no-debug",
+                    "session_id": "session-stream-no-debug",
+                    "query": "推荐一件通勤外套",
+                    "debug": True,
+                },
+            ) as response:
+                body = response.read().decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("trace_events", body)
+        self.assertNotIn("selected_tools", body)
+        events = parse_sse_events(body)
+        self.assertEqual(events[-1][0], "done")
+        self.assertEqual(events[-1][1]["product_refs"][0]["spu_id"], 1001)
+        for line in body.splitlines():
+            if line.startswith("data: "):
+                self.assertNotIn("\n", line.removeprefix("data: "))
+                json.loads(line.removeprefix("data: "))
 
     def test_chat_stream_uses_session_id_when_thread_id_is_absent(self):
         fake_result = {

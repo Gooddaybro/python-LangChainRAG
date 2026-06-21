@@ -47,18 +47,37 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 from fastapi.exceptions import RequestValidationError
 
+
+async def extract_safe_request_body(request: Request):
+    request_id = await extract_request_id(request)
+    if request_id is None:
+        return None
+
+    return {"request_id": request_id}
+
+
+def sanitize_validation_errors(errors):
+    sanitized = []
+    for error in errors:
+        sanitized.append(
+            {
+                key: value
+                for key, value in error.items()
+                if key not in {"input", "ctx", "url"}
+            }
+        )
+
+    return sanitized
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    try:
-        body = await request.json()
-    except Exception:
-        body = "Could not parse body"
-    logger.error(f"422 Validation Error on {request.method} {request.url.path}")
-    logger.error(f"Request body: {body}")
-    logger.error(f"Validation errors: {exc.errors()}")
+    safe_body = await extract_safe_request_body(request)
+    safe_errors = sanitize_validation_errors(exc.errors())
+    logger.warning("422 validation error on %s %s: %s", request.method, request.url.path, safe_errors)
     return JSONResponse(
         status_code=422,
-        content=jsonable_encoder({"detail": exc.errors(), "body": body}),
+        content=jsonable_encoder({"detail": safe_errors, "body": safe_body}),
     )
 
 

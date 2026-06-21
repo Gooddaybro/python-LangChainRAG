@@ -103,6 +103,21 @@ def term_match_score(query_terms: set[str], candidate: dict[str, Any]) -> float:
     return matched / len(query_terms)
 
 
+def has_term_match(query_terms: set[str], candidate: dict[str, Any]) -> bool:
+    if not query_terms:
+        return False
+
+    text = " ".join(candidate_terms(candidate))
+    return any(term and term in text for term in query_terms)
+
+
+def format_amount(value: float) -> str:
+    if value.is_integer():
+        return str(int(value))
+
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
 def get_recommended_size(tool_results: dict[str, Any]) -> str | None:
     size_result = tool_results.get("size_tool") or {}
     recommended_size = size_result.get("recommended_size")
@@ -175,6 +190,7 @@ def score_candidate(
     query_terms: set[str],
     recommended_size: str | None,
     alternative_size: str | None,
+    user_context: dict[str, Any],
 ) -> tuple[float, list[str]]:
     score = 0.0
     score_parts = []
@@ -191,14 +207,24 @@ def score_candidate(
         else:
             return -1.0, []
 
-    match_score = term_match_score(query_terms, candidate)
-    if match_score:
+    if has_term_match(query_terms, candidate):
+        match_score = term_match_score(query_terms, candidate)
         score += match_score * 0.2
-        score_parts.append("风格或场景标签匹配")
+        score_parts.append("风格、季节或场景标签匹配")
 
     sale_price = as_number(candidate.get("sale_price"))
-    if sale_price is not None:
+    budget_max = as_number(user_context.get("budget_max"))
+    if sale_price is not None and budget_max is not None and sale_price <= budget_max:
+        score += 0.1
+        score_parts.append(f"价格 {format_amount(sale_price)} 在预算 {format_amount(budget_max)} 内")
+    elif sale_price is not None:
         score += 0.05
+
+    preferred_colors = {normalize_text(value) for value in user_context.get("preferred_colors") or [] if value}
+    candidate_color = normalize_text(candidate.get("color"))
+    if candidate_color and candidate_color in preferred_colors:
+        score += 0.1
+        score_parts.append(f"{candidate.get('color')}匹配颜色偏好")
 
     return score, score_parts
 
@@ -234,7 +260,7 @@ def build_product_refs(
         if sku_id is None or spu_id is None or sku_id in seen_skus:
             continue
 
-        score, score_parts = score_candidate(candidate, query_terms, recommended_size, alternative_size)
+        score, score_parts = score_candidate(candidate, query_terms, recommended_size, alternative_size, user_context)
         if score < 0:
             continue
 

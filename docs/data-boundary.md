@@ -197,6 +197,7 @@ debug 不应该长期公开给普通用户，因为它可能暴露：
 - 不记录 API key。
 - 不记录完整隐私数据。
 - trace 落盘必须可开关。
+- trace 落盘已默认关闭；显式启用时会对明显的 `Authorization: Bearer ...`、`api_key=...`、`token=...`、`password=...`、`secret=...` 片段做脱敏。
 - 错误日志应有 request id 或 run id。
 - 对外 `500` 响应不应暴露内部堆栈。
 
