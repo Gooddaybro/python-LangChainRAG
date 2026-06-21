@@ -24,7 +24,15 @@ tests/test_langgraph_production_nodes.py
 tests/test_eval_report.py
 ```
 
-下一步要补的是独立的答案质量评测。
+答案质量评测第一版已经落地：
+
+```text
+clothing_assistant/agent/answer_quality_cases.py
+clothing_assistant/agent/answer_quality_report.py
+tests/test_answer_quality_report.py
+```
+
+落地说明见 `docs/answer-quality-evaluation-plan.md`。
 
 ## 2. 两类评测的边界
 
@@ -116,6 +124,15 @@ python -m clothing_assistant.agent.eval_report
 ```
 
 当前 `eval_report` 使用 fake tools，目的是让评测聚焦于路由、工具选择和停止原因，不受真实向量库、大模型或网络状态影响。
+
+运行答案质量评测：
+
+```powershell
+python -m unittest tests.test_answer_quality_report -v
+python -m clothing_assistant.agent.answer_quality_report
+```
+
+答案质量报告也使用 fake tools 和 fake answer generator，目的是稳定检查关键事实、禁用词、grounding、stop reason 和 debug 泄露，不依赖真实模型。
 
 ## 5. 确定性评测扩展计划
 
@@ -324,8 +341,6 @@ failure_reasons
 
 仍然缺少：
 
-- 独立答案质量 case 文件。
-- 独立答案质量报告。
 - 30+ 真实业务 case。
 - 冲突证据 case。
 - 更完整的历史追问 case。
@@ -342,3 +357,5 @@ failure_reasons
 5. 把 Streamlit Eval Report 区分为“路由/工具评测”和“答案质量评测”。
 6. 在 README 里补充两个评测命令。
 7. 后续再考虑 LLM judge。
+
+具体字段、第一批 case、评分规则和验收标准见 `docs/answer-quality-evaluation-plan.md`。

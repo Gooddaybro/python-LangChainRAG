@@ -166,6 +166,78 @@ class RecommendationServiceTests(unittest.TestCase):
 
         self.assertEqual(refs, [])
 
+    def test_build_product_refs_skips_invalid_and_duplicate_candidate_ids(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "通勤轻薄外套",
+                "category": "外套",
+                "stock_status": "in_stock",
+                "style_tags": ["通勤"],
+                "sale_price": 299,
+            },
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "重复 SKU",
+                "category": "外套",
+                "stock_status": "in_stock",
+                "style_tags": ["通勤"],
+                "sale_price": 299,
+            },
+            {
+                "spu_id": 1002,
+                "name": "缺少 SKU 的候选",
+                "category": "外套",
+                "stock_status": "in_stock",
+                "style_tags": ["通勤"],
+                "sale_price": 199,
+            },
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "推荐一件通勤外套",
+            {},
+            {},
+        )
+
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0]["spu_id"], 1001)
+        self.assertEqual(refs[0]["sku_id"], 2001)
+
+    def test_build_product_refs_explains_budget_color_and_scene_matches(self):
+        candidates = [
+            {
+                "spu_id": 1002,
+                "sku_id": 2101,
+                "name": "通勤轻薄外套",
+                "category": "外套",
+                "color": "黑色",
+                "stock_status": "in_stock",
+                "season": ["autumn"],
+                "style_tags": ["commute"],
+                "sale_price": 299,
+            }
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "秋季通勤，想要黑色外套",
+            {"budget_max": 300, "preferred_colors": ["黑色"]},
+            {},
+        )
+
+        self.assertEqual(len(refs), 1)
+        reason = refs[0]["reason"]
+        self.assertIn("当前候选显示有库存", reason)
+        self.assertIn("风格、季节或场景标签匹配", reason)
+        self.assertIn("价格 299 在预算 300 内", reason)
+        self.assertIn("黑色匹配颜色偏好", reason)
+
 
 if __name__ == "__main__":
     unittest.main()

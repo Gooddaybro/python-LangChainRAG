@@ -1,11 +1,11 @@
 # Java 与 Python 聊天契约 v0.1
 
-本文档定义 Java 后端调用 Python AI 导购服务的第一版同步 HTTP 契约。
+本文档定义 Java 后端调用 Python AI 导购服务的第一版 HTTP 契约。
 目标是先锁定 `assistant-service` 与 FastAPI `/chat` 之间的字段边界，让 Java 和 Python 可以独立开发、独立测试，再通过同一份契约联调。
 
 ## 1. 范围
 
-本契约只覆盖第一阶段同步聊天：
+本契约主要覆盖第一阶段同步聊天：
 
 ```text
 Java assistant-service
@@ -15,12 +15,13 @@ Java assistant-service
 -> Java 保存消息和推荐结果
 ```
 
-暂不覆盖：
+第一阶段不覆盖：
 
-- `/chat/stream` SSE 流式输出。
 - MQ 异步 AI 任务。
 - Python 主动调用 Java internal product API。
 - Python 持久化会话或订单状态。
+
+`/chat/stream` 已在 2026-06-19 纳入轻量回归测试，测试范围见本文末尾“流式接口回归边界”。
 
 第一阶段边界：
 
@@ -140,7 +141,7 @@ Java 可以从 `assistant_message` 的 `role/content` 记录组装成这个结�
   "fit_type": "regular",
   "season": ["spring", "autumn"],
   "style_tags": ["commute", "minimal"],
-  "main_image_url": "https://example.com/image.jpg"
+  "main_image_url": "/images/products/jacket-commute-main.svg"
 }
 ```
 
@@ -249,6 +250,7 @@ price_check
 规则：
 
 - `product_refs` 必须来自 `candidates` 或启用的 provider。
+- `reason` 必须能追溯到允许的证据，例如候选商品库存、尺码、颜色、价格、季节、风格标签、用户预算或用户颜色偏好；不得编造折扣、库存承诺、物流承诺或售后政策。
 - `rank_score` 只是推荐排序参考，不代表业务优先级或交易承诺。
 - Python 返回多个商品时应按推荐优先级排序。
 
@@ -320,6 +322,8 @@ price_check
 
 当 `debug=false` 时，响应不得包含内部 trace、检索 chunk、prompt 或工具原始输出。
 
+`/chat/stream` 面向 Java 转发链路，当前 done 事件不暴露 `debug`、`trace_events`、`selected_tools` 等内部字段。即使请求体里带 `debug=true`，流式输出也必须保持前端可见字段边界。
+
 当 `debug=true` 时，Python 可以返回：
 
 - `thread_id`
@@ -368,3 +372,19 @@ Java 收到 `PythonChatResponse` 后建议保存：
 - `ai_request_log.latency_ms`
 
 Python 不负责保存这些表，只负责返回可保存的结构化结果。
+
+## 16. 2026-06-19 流式接口回归边界
+
+本轮新增 Python 侧回归点：
+
+- `/chat/stream` 的 `data:` 行必须是单行 JSON，便于 Java SSE parser 稳定解析。
+- `done` 事件保留 `request_id`、`answer`、`intent`、`product_refs`，其中 `product_refs` 必须来自候选数据或允许的事实 provider。
+- 流式输出不得包含 `debug`、`trace_events`、`selected_tools` 等内部调试字段。
+- Python 生成 `product_refs` 时跳过候选池外、缺少 `spu_id`/`sku_id`、以及重复的候选引用。
+- Python 生成的 `reason` 现在覆盖库存可见、尺码、风格/季节/场景匹配、预算匹配和颜色偏好匹配，并通过 `tests.test_recommendation_service` 回归。
+
+本轮验证命令：
+
+```bash
+.venv/bin/python -m unittest tests.test_chat_stream tests.test_recommendation_service -v
+```

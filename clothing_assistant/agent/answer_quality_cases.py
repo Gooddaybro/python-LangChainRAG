@@ -1,0 +1,120 @@
+"""Answer quality cases for the clothing assistant.
+
+These cases check user-visible answer quality. They intentionally stay separate
+from ``eval_cases.py``, which only checks routing, tool choice, and stop reason.
+"""
+
+from clothing_assistant.agent.eval_cases import SIZE_HISTORY
+
+
+ANSWER_QUALITY_CASES = [
+    {
+        "name": "inventory_answer_mentions_exact_stock",
+        "query": "基础款纯棉T恤黑色L码有货吗？",
+        "must_include": ["基础款纯棉T恤", "黑色", "L", "8"],
+        "must_not_include": ["XL有货", "可能", "大概", "trace_events"],
+        "expected_grounding": "structured_lookup",
+        "expected_stop_reason": "final_answer",
+        "answer_type": "inventory",
+        "max_answer_length": 160,
+    },
+    {
+        "name": "inventory_answer_handles_out_of_stock",
+        "query": "基础款纯棉T恤黑色XL码有货吗？",
+        "must_include": ["基础款纯棉T恤", "黑色", "XL", "无货"],
+        "must_not_include": ["当前库存 8", "推荐直接下单", "大概"],
+        "expected_grounding": "structured_lookup",
+        "expected_stop_reason": "final_answer",
+        "answer_type": "inventory",
+        "max_answer_length": 160,
+    },
+    {
+        "name": "inventory_missing_color_asks_follow_up",
+        "query": "基础款纯棉T恤L码有货吗？",
+        "must_include": ["颜色"],
+        "must_not_include": ["黑色 L 码有货", "白色 L 码有货", "库存 8"],
+        "expected_grounding": "direct_answer",
+        "expected_stop_reason": "missing_info",
+        "answer_type": "missing_info",
+        "max_answer_length": 120,
+    },
+    {
+        "name": "inventory_missing_size_asks_follow_up",
+        "query": "基础款纯棉T恤黑色有货吗？",
+        "must_include": ["尺码"],
+        "must_not_include": ["L 码有货", "M 码有货", "库存 8"],
+        "expected_grounding": "direct_answer",
+        "expected_stop_reason": "missing_info",
+        "answer_type": "missing_info",
+        "max_answer_length": 120,
+    },
+    {
+        "name": "price_answer_mentions_catalog_price",
+        "query": "基础款纯棉T恤多少钱？",
+        "must_include": ["基础款纯棉T恤", "99"],
+        "must_not_include": ["大约", "可能", "促销价", "trace_events"],
+        "expected_grounding": "structured_lookup",
+        "expected_stop_reason": "final_answer",
+        "answer_type": "price",
+        "max_answer_length": 120,
+    },
+    {
+        "name": "rag_care_answer_uses_safe_product_knowledge",
+        "query": "纯棉T恤怎么洗？",
+        "must_include": ["纯棉", "洗"],
+        "must_not_include": ["库存", "价格", "trace_events", "selected_tools"],
+        "expected_grounding": "rag_tool",
+        "expected_stop_reason": "final_answer",
+        "answer_type": "rag",
+        "max_answer_length": 220,
+    },
+    {
+        "name": "rag_color_answer_stays_in_style_context",
+        "query": "日常通勤推荐什么颜色？",
+        "must_include": ["通勤", "黑色"],
+        "must_not_include": ["库存", "价格", "trace_events", "accepted_chunks"],
+        "expected_grounding": "rag_tool",
+        "expected_stop_reason": "final_answer",
+        "answer_type": "rag",
+        "max_answer_length": 220,
+    },
+    {
+        "name": "weak_retrieval_uses_conservative_fallback",
+        "query": "日常通勤推荐什么颜色？",
+        "tool_fixture": "weak_rag",
+        "must_include": ["没有检索到足够可靠"],
+        "must_not_include": ["一定适合", "绝对", "trace_events", "selected_tools"],
+        "expected_grounding": "rag_tool",
+        "expected_stop_reason": "answer_fallback",
+        "answer_type": "rag",
+        "max_answer_length": 160,
+    },
+    {
+        "name": "size_follow_up_uses_history",
+        "query": "那我想宽松一点呢？",
+        "chat_history": SIZE_HISTORY,
+        "must_include": ["宽松", "L"],
+        "must_not_include": ["无法判断上一轮", "trace_events", "selected_tools"],
+        "expected_grounding": "size_tool",
+        "expected_stop_reason": "final_answer",
+        "answer_type": "size",
+        "max_answer_length": 180,
+    },
+    {
+        "name": "user_answer_does_not_leak_debug_fields",
+        "query": "通勤轻薄外套价格是多少？",
+        "must_include": ["通勤轻薄外套", "299"],
+        "must_not_include": [
+            "trace_events",
+            "selected_tools",
+            "accepted_chunks",
+            "intent_result",
+            "structured_result",
+        ],
+        "expected_grounding": "structured_lookup",
+        "expected_stop_reason": "final_answer",
+        "answer_type": "debug_leak",
+        "max_answer_length": 140,
+    },
+]
+

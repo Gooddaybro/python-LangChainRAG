@@ -166,6 +166,43 @@ class AgentPipelineTests(unittest.TestCase):
         self.assertTrue(Path(trace_path).name.endswith(".jsonl"))
         self.assertIn("direct_answer", trace_content)
 
+    def test_trace_persistence_redacts_obvious_secrets(self):
+        state: AgentState = {
+            "user_query": "Authorization: Bearer abc123 password=raw-secret",
+            "answer": "token=assistant-secret",
+            "stop_reason": "direct_answer",
+            "selected_tools": [],
+            "tool_call_count": 0,
+        }
+        trace_events = make_trace("direct_answer", detail="api_key=provider-secret")
+
+        trace_dir = BASE_DIR.parent / ".test_tmp" / "trace_redaction_test"
+        trace_dir.mkdir(parents=True, exist_ok=True)
+
+        old_enabled = os.environ.get("AGENT_TRACE_TO_FILE")
+        old_dir = os.environ.get("AGENT_TRACE_DIR")
+        os.environ["AGENT_TRACE_TO_FILE"] = "true"
+        os.environ["AGENT_TRACE_DIR"] = str(trace_dir)
+        try:
+            trace_path = persist_trace_if_enabled(state, trace_events)
+            trace_content = Path(trace_path).read_text(encoding="utf-8")
+        finally:
+            if old_enabled is None:
+                os.environ.pop("AGENT_TRACE_TO_FILE", None)
+            else:
+                os.environ["AGENT_TRACE_TO_FILE"] = old_enabled
+
+            if old_dir is None:
+                os.environ.pop("AGENT_TRACE_DIR", None)
+            else:
+                os.environ["AGENT_TRACE_DIR"] = old_dir
+
+        self.assertNotIn("abc123", trace_content)
+        self.assertNotIn("raw-secret", trace_content)
+        self.assertNotIn("assistant-secret", trace_content)
+        self.assertNotIn("provider-secret", trace_content)
+        self.assertIn("[已隐藏]", trace_content)
+
 
 if __name__ == "__main__":
     unittest.main()

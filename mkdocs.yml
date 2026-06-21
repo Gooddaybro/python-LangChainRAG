@@ -38,6 +38,7 @@ nav:
       - 数据边界: data-boundary.md
       - API 设计: api-design.md
       - 评测设计: eval-plan.md
+      - 答案质量评测落地计划: answer-quality-evaluation-plan.md
   - API Reference:
       - 总览: api-reference.md
       - Agent: api/agent.md

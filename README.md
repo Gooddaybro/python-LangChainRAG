@@ -106,6 +106,13 @@ python -m compileall -q clothing_assistant tests
 python -m clothing_assistant.agent.eval_report
 ```
 
+生成答案质量评测表。这个报告不检查“有没有走对节点”，而是检查最终给用户看的答案是否包含关键事实、是否没有编造价格/库存、是否没有泄露 debug 字段。
+
+```powershell
+python -m clothing_assistant.agent.answer_quality_report
+python -m unittest tests.test_answer_quality_report -v
+```
+
 ## Local Agent Trace
 
 Agent debug trace is always returned in `result["debug"]["trace_events"]`.

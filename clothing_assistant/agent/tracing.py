@@ -6,6 +6,7 @@ trace_events 是学习和调试 Agent 的关键证据：它能告诉你一次请
 
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -13,6 +14,13 @@ from clothing_assistant.config_data import BASE_DIR
 
 
 DEFAULT_TRACE_DIR = BASE_DIR / "traces"
+SENSITIVE_TEXT_PATTERNS = [
+    re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+"),
+    re.compile(r"(?i)(api[_-]?key\s*[:=]\s*)[^\s,;]+"),
+    re.compile(r"(?i)(token\s*[:=]\s*)[^\s,;]+"),
+    re.compile(r"(?i)(password\s*[:=]\s*)[^\s,;]+"),
+    re.compile(r"(?i)(secret\s*[:=]\s*)[^\s,;]+"),
+]
 
 
 def is_trace_to_file_enabled():
@@ -30,9 +38,35 @@ def get_trace_dir():
     return DEFAULT_TRACE_DIR
 
 
+def redact_sensitive_text(value):
+    """Mask obvious secret-bearing fragments before optional local trace persistence."""
+    if not isinstance(value, str):
+        return value
+
+    redacted = value
+    for pattern in SENSITIVE_TEXT_PATTERNS:
+        redacted = pattern.sub(lambda match: f"{match.group(1)}[已隐藏]", redacted)
+
+    return redacted
+
+
+def redact_sensitive_values(value):
+    """Recursively redact strings inside trace structures without changing their shape."""
+    if isinstance(value, dict):
+        return {key: redact_sensitive_values(item) for key, item in value.items()}
+
+    if isinstance(value, list):
+        return [redact_sensitive_values(item) for item in value]
+
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_values(item) for item in value)
+
+    return redact_sensitive_text(value)
+
+
 def build_trace_record(state, trace_events):
     """只保存复盘需要的字段，不把完整 prompt 或大对象默认写进 trace。"""
-    return {
+    return redact_sensitive_values({
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "user_query": state["user_query"],
         "thread_id": state.get("thread_id"),
@@ -42,7 +76,7 @@ def build_trace_record(state, trace_events):
         "stop_reason": state.get("stop_reason"),
         "answer": state.get("answer"),
         "trace_events": trace_events,
-    }
+    })
 
 
 def persist_trace_if_enabled(state, trace_events=None):
