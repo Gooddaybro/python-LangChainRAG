@@ -7,6 +7,7 @@ from clothing_assistant.agent.router import (
     INTENT_RECOMMENDATION,
     INTENT_SIZE_RECOMMENDATION,
 )
+from clothing_assistant.application.preference_parser import parse_preferences
 
 
 RECOMMENDABLE_INTENTS = {
@@ -16,6 +17,23 @@ RECOMMENDABLE_INTENTS = {
 }
 
 IN_STOCK_STATUSES = {"in_stock", "low_stock", "available", "on_sale"}
+
+VISUAL_GOAL_TERMS = {
+    "taller": ["taller", "显高", "高腰", "中高腰", "短款", "直筒", "拉长比例", "显腿长"],
+    "slimmer": ["slimmer", "显瘦", "修身", "直筒", "垂顺", "深色", "黑色", "藏青色", "遮肉"],
+}
+
+VISUAL_GOAL_REASONS = {
+    "taller": "版型或腰线更利于拉长比例",
+    "slimmer": "颜色、线条或版型更贴合显瘦需求",
+}
+
+AVOID_TAG_TERMS = {
+    "bulky": ["bulky", "臃肿", "厚重", "膨胀", "拖沓"],
+    "low_waist": ["low_waist", "低腰"],
+    "overly_formal": ["overly_formal", "过度正式", "商务正装", "正式商务"],
+    "oversized": ["oversized", "过度宽松", "超宽松", "oversize"],
+}
 
 
 def normalize_text(value: Any) -> str:
@@ -49,7 +67,7 @@ def has_stock(candidate: dict[str, Any]) -> bool:
     return stock_status in IN_STOCK_STATUSES
 
 
-def collect_query_terms(user_query: str, user_context: dict[str, Any]) -> set[str]:
+def collect_query_terms(user_query: str, user_context: dict[str, Any], preferences: dict[str, Any]) -> set[str]:
     terms = set()
     normalized_query = normalize_text(user_query)
 
@@ -74,6 +92,10 @@ def collect_query_terms(user_query: str, user_context: dict[str, Any]) -> set[st
             if value:
                 terms.add(normalize_text(value))
 
+    for key in ["scene", "style_tags", "visual_goals", "persona_tags", "season"]:
+        for value in preferences.get(key) or []:
+            terms.add(normalize_text(value))
+
     return terms
 
 
@@ -85,7 +107,7 @@ def candidate_terms(candidate: dict[str, Any]) -> set[str]:
         if value:
             terms.add(value)
 
-    for key in ["season", "style_tags"]:
+    for key in ["season", "style_tags", "attribute_tags", "visual_effect_tags", "occasion_tags"]:
         for value in candidate.get(key) or []:
             normalized = normalize_text(value)
             if normalized:
@@ -94,11 +116,27 @@ def candidate_terms(candidate: dict[str, Any]) -> set[str]:
     return terms
 
 
+def candidate_text(candidate: dict[str, Any]) -> str:
+    return " ".join(candidate_terms(candidate))
+
+
+def collect_preferred_colors(user_context: dict[str, Any], preferences: dict[str, Any]) -> set[str]:
+    colors = {normalize_text(value) for value in user_context.get("preferred_colors") or [] if value}
+    colors.update(normalize_text(value) for value in preferences.get("preferred_colors") or [] if value)
+    return colors
+
+
+def resolve_budget_max(user_context: dict[str, Any], preferences: dict[str, Any]) -> float | None:
+    context_budget = as_number(user_context.get("budget_max"))
+    preference_budget = as_number(preferences.get("budget_max"))
+    return context_budget if context_budget is not None else preference_budget
+
+
 def term_match_score(query_terms: set[str], candidate: dict[str, Any]) -> float:
     if not query_terms:
         return 0
 
-    text = " ".join(candidate_terms(candidate))
+    text = candidate_text(candidate)
     matched = sum(1 for term in query_terms if term and term in text)
     return matched / len(query_terms)
 
@@ -107,7 +145,7 @@ def has_term_match(query_terms: set[str], candidate: dict[str, Any]) -> bool:
     if not query_terms:
         return False
 
-    text = " ".join(candidate_terms(candidate))
+    text = candidate_text(candidate)
     return any(term and term in text for term in query_terms)
 
 
@@ -191,6 +229,7 @@ def score_candidate(
     recommended_size: str | None,
     alternative_size: str | None,
     user_context: dict[str, Any],
+    preferences: dict[str, Any],
 ) -> tuple[float, list[str]]:
     score = 0.0
     score_parts = []
@@ -213,18 +252,55 @@ def score_candidate(
         score_parts.append("风格、季节或场景标签匹配")
 
     sale_price = as_number(candidate.get("sale_price"))
-    budget_max = as_number(user_context.get("budget_max"))
+    budget_max = resolve_budget_max(user_context, preferences)
+    if sale_price is not None and budget_max is not None and sale_price > budget_max:
+        return -1.0, []
+
     if sale_price is not None and budget_max is not None and sale_price <= budget_max:
         score += 0.1
         score_parts.append(f"价格 {format_amount(sale_price)} 在预算 {format_amount(budget_max)} 内")
     elif sale_price is not None:
         score += 0.05
 
-    preferred_colors = {normalize_text(value) for value in user_context.get("preferred_colors") or [] if value}
+    if sale_price is not None and preferences.get("price_preference") == "budget":
+        score += 0.1
+        score_parts.append("符合平价优先")
+
+    preferred_colors = collect_preferred_colors(user_context, preferences)
     candidate_color = normalize_text(candidate.get("color"))
     if candidate_color and candidate_color in preferred_colors:
         score += 0.1
         score_parts.append(f"{candidate.get('color')}匹配颜色偏好")
+
+    text = candidate_text(candidate)
+
+    if preferences.get("visual_goals"):
+        for goal in preferences["visual_goals"]:
+            terms = VISUAL_GOAL_TERMS.get(goal, [normalize_text(goal)])
+            if any(term in text for term in terms):
+                score += 0.08
+                score_parts.append(VISUAL_GOAL_REASONS.get(goal, "匹配视觉修饰目标"))
+
+    if "student" in (preferences.get("persona_tags") or []):
+        if preferences.get("price_preference") == "budget" and sale_price is not None:
+            score += 0.06
+            score_parts.append("价格和风格更适合学生日常穿搭")
+        if any(term in text for term in ["campus", "daily", "casual", "basic", "校园", "日常", "休闲", "基础"]):
+            score += 0.06
+            score_parts.append("偏休闲基础，适合校园或日常场景")
+
+    if {"basic", "minimal"} & set(preferences.get("style_tags") or []):
+        if any(term in text for term in ["basic", "minimal", "基础", "简洁", "百搭"]):
+            score += 0.06
+            score_parts.append("基础色或简洁版型更容易一衣多穿")
+
+    # avoid_tags is a soft penalty: demote risky items without emptying a small
+    # Java candidate pool just because one non-ideal feature is present.
+    for avoid_tag in preferences.get("avoid_tags") or []:
+        risky_terms = AVOID_TAG_TERMS.get(avoid_tag, [normalize_text(avoid_tag)])
+        if any(term in text for term in risky_terms):
+            score -= 0.08
+            score_parts.append("存在部分需要规避的版型或风格特征")
 
     return score, score_parts
 
@@ -247,9 +323,10 @@ def build_product_refs(
 
     user_context = user_context or {}
     tool_results = tool_results or {}
+    preferences = parse_preferences(user_query)
     recommended_size = get_recommended_size(tool_results)
     alternative_size = get_alternative_size(tool_results)
-    query_terms = collect_query_terms(user_query, user_context)
+    query_terms = collect_query_terms(user_query, user_context, preferences)
 
     scored_candidates = []
     seen_skus = set()
@@ -260,7 +337,14 @@ def build_product_refs(
         if sku_id is None or spu_id is None or sku_id in seen_skus:
             continue
 
-        score, score_parts = score_candidate(candidate, query_terms, recommended_size, alternative_size, user_context)
+        score, score_parts = score_candidate(
+            candidate,
+            query_terms,
+            recommended_size,
+            alternative_size,
+            user_context,
+            preferences,
+        )
         if score < 0:
             continue
 

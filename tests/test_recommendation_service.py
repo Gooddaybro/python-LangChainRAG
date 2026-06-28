@@ -238,6 +238,131 @@ class RecommendationServiceTests(unittest.TestCase):
         self.assertIn("价格 299 在预算 300 内", reason)
         self.assertIn("黑色匹配颜色偏好", reason)
 
+    def test_fuzzy_student_budget_query_prefers_matching_candidate(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "基础百搭卫衣",
+                "category": "卫衣",
+                "color": "黑色",
+                "stock_status": "in_stock",
+                "style_tags": ["casual", "basic"],
+                "sale_price": 199,
+            },
+            {
+                "spu_id": 1002,
+                "sku_id": 2002,
+                "name": "正式商务西装",
+                "category": "西装",
+                "color": "黑色",
+                "stock_status": "in_stock",
+                "style_tags": ["formal"],
+                "sale_price": 899,
+            },
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "学生党想要平价百搭，预算500以内",
+            {},
+            {},
+        )
+
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0]["spu_id"], 1001)
+        self.assertIn("风格、季节或场景标签匹配", refs[0]["reason"])
+        self.assertIn("价格 199 在预算 500 内", refs[0]["reason"])
+        self.assertIn("符合平价优先", refs[0]["reason"])
+
+    def test_router_treats_fuzzy_profile_as_recommendation(self):
+        result = intent_router("学生党平价百搭")
+
+        self.assertEqual(result["intent"], "recommendation")
+
+    def test_router_treats_synonym_profile_as_recommendation(self):
+        result = intent_router("大学生日常上课，别太贵，还要遮肉显腿长")
+
+        self.assertEqual(result["intent"], "recommendation")
+
+    def test_visual_goal_uses_java_attribute_tags(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "中高腰直筒牛仔裤",
+                "category": "牛仔裤",
+                "color": "黑色",
+                "stock_status": "in_stock",
+                "style_tags": ["casual"],
+                "attribute_tags": ["下装版型:直筒", "腰线:中高腰"],
+                "sale_price": 259,
+            },
+            {
+                "spu_id": 1002,
+                "sku_id": 2002,
+                "name": "宽松低腰休闲裤",
+                "category": "休闲裤",
+                "color": "米色",
+                "stock_status": "in_stock",
+                "style_tags": ["casual"],
+                "attribute_tags": ["下装版型:宽松", "腰线:低腰"],
+                "sale_price": 229,
+            },
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "想要显高显瘦的裤子",
+            {},
+            {},
+        )
+
+        self.assertEqual(refs[0]["spu_id"], 1001)
+        self.assertIn("版型或腰线更利于拉长比例", refs[0]["reason"])
+        self.assertIn("颜色、线条或版型更贴合显瘦需求", refs[0]["reason"])
+
+    def test_synonym_profile_scores_student_and_visual_reasons(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "黑色中高腰直筒裤",
+                "category": "裤子",
+                "color": "黑色",
+                "stock_status": "in_stock",
+                "style_tags": ["casual", "basic"],
+                "attribute_tags": ["腰线:中高腰", "下装版型:直筒"],
+                "sale_price": 199,
+            },
+            {
+                "spu_id": 1002,
+                "sku_id": 2002,
+                "name": "米色低腰宽松裤",
+                "category": "裤子",
+                "color": "米色",
+                "stock_status": "in_stock",
+                "style_tags": ["formal"],
+                "attribute_tags": ["腰线:低腰", "版型:过度宽松"],
+                "sale_price": 299,
+            },
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "适合大学生日常上课，别太贵，看起来显腿长一点，还要遮肉",
+            {},
+            {},
+        )
+
+        self.assertEqual(refs[0]["spu_id"], 1001)
+        self.assertIn("价格和风格更适合学生日常穿搭", refs[0]["reason"])
+        self.assertIn("版型或腰线更利于拉长比例", refs[0]["reason"])
+        self.assertIn("颜色、线条或版型更贴合显瘦需求", refs[0]["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

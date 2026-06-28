@@ -12,6 +12,14 @@ pip install -r requirements.txt
 $env:DASHSCOPE_API_KEY="your-dashscope-api-key"
 ```
 
+`DASHSCOPE_API_KEY` 是当前项目的统一大模型 Key。默认只用于回答生成；如需启用“学生党、显高显瘦、平价百搭”等模糊需求的大模型结构化映射，再额外设置：
+
+```powershell
+$env:ENABLE_LLM_PREFERENCE_MAPPER="true"
+```
+
+未开启时系统使用规则版 preference parser，不会额外调用大模型。
+
 ## Run
 
 先更新知识库：

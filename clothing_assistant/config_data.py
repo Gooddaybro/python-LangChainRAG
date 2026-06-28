@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 # 应该只放配置，不放业务逻辑。
 # 定义项目里的“路径配置”和“默认要加载哪些知识文件”。
@@ -15,6 +16,7 @@ VECTOR_COLLECTION_NAME = "clothing_knowledge_base"
 EMBEDDING_MODEL_NAME = "text-embedding-v1"
 CHAT_MODEL_NAME = "qwen-turbo"
 CHAT_TEMPERATURE = 0.1
+ENABLE_LLM_PREFERENCE_MAPPER = os.getenv("ENABLE_LLM_PREFERENCE_MAPPER", "false").lower() == "true"
 DEFAULT_TOP_K = 4
 SIZE_KNOWLEDGE_FILE = "尺码推荐.txt"
 COLOR_KNOWLEDGE_FILE = "颜色选择.txt"

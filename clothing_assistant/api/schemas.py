@@ -52,6 +52,7 @@ class ProductCandidate(BaseModel):
     fit_type: str | None = Field(default=None, description="候选商品版型，如 regular 或 slim。")
     season: list[str] = Field(default_factory=list, description="候选商品的季节标签。")
     style_tags: list[str] = Field(default_factory=list, description="用于推荐推理的风格标签。")
+    attribute_tags: list[str] = Field(default_factory=list, description="Java 商品属性标签，如 厚度:常规 或 适用场景:通勤。")
     main_image_url: str | None = Field(default=None, description="用于 Java 或前端展示的主图 URL。")
 
 
