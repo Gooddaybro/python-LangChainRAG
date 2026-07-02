@@ -286,6 +286,93 @@ class RecommendationServiceTests(unittest.TestCase):
 
         self.assertEqual(result["intent"], "recommendation")
 
+    def test_router_treats_gender_outfit_and_skirt_queries_as_recommendation(self):
+        for query in ["男性穿搭", "女性穿搭", "女生通勤半裙", "裙子"]:
+            with self.subTest(query=query):
+                result = intent_router(query)
+
+                self.assertEqual(result["intent"], "recommendation")
+
+    def test_skirt_query_prefers_skirt_candidate(self):
+        candidates = [
+            {
+                "spu_id": 1120,
+                "sku_id": 11201,
+                "name": "通勤百褶半裙",
+                "category": "半裙",
+                "stock_status": "in_stock",
+                "style_tags": ["commute"],
+                "attribute_tags": ["场景:通勤", "适用性别:female"],
+                "sale_price": 189,
+            },
+            {
+                "spu_id": 1002,
+                "sku_id": 10021,
+                "name": "通勤轻薄外套",
+                "category": "外套",
+                "stock_status": "in_stock",
+                "style_tags": ["commute"],
+                "attribute_tags": ["场景:通勤", "适用性别:unisex"],
+                "sale_price": 299,
+            },
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "女性裙子推荐",
+            {},
+            {},
+        )
+
+        self.assertEqual(refs[0]["spu_id"], 1120)
+        self.assertIn("风格、季节或场景标签匹配", refs[0]["reason"])
+
+    def test_demand_intent_terms_drive_ranking_when_query_is_generic(self):
+        candidates = [
+            {
+                "spu_id": 1120,
+                "sku_id": 11201,
+                "name": "通勤百褶半裙",
+                "category": "半裙",
+                "stock_status": "in_stock",
+                "style_tags": ["commute"],
+                "attribute_tags": ["场景:通勤", "适用性别:female"],
+                "sale_price": 189,
+            },
+            {
+                "spu_id": 1002,
+                "sku_id": 10021,
+                "name": "通勤轻薄外套",
+                "category": "外套",
+                "stock_status": "in_stock",
+                "style_tags": ["commute"],
+                "attribute_tags": ["场景:通勤", "适用性别:unisex"],
+                "sale_price": 299,
+            },
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "帮我推荐一下",
+            {},
+            {},
+            demand_intent={
+                "targetGender": "female",
+                "category": "半裙",
+                "scene": ["commute"],
+                "style": ["commute", "minimal"],
+                "budgetMax": 200,
+                "attributes": [],
+            },
+        )
+
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0]["spu_id"], 1120)
+        self.assertIn("风格、季节或场景标签匹配", refs[0]["reason"])
+        self.assertIn("价格 189 在预算 200 内", refs[0]["reason"])
+
     def test_visual_goal_uses_java_attribute_tags(self):
         candidates = [
             {

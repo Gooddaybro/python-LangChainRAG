@@ -170,6 +170,7 @@ def chat(request: PythonChatRequest):
             session_id=request.session_id,
             user_context=request.user_context_dict(),
             candidates=request.candidate_dicts(),
+            demand_intent=request.demand_intent_dict(),
         )
     except Exception:
         logger.exception("POST /chat 接口发生未捕获异常")
@@ -199,6 +200,7 @@ def generate_chat_stream(request: PythonChatRequest):
             session_id=request.session_id,
             user_context=request.user_context_dict(),
             candidates=request.candidate_dicts(),
+            demand_intent=request.demand_intent_dict(),
         )
     except Exception:
         logger.exception("POST /chat/stream 接口发生未捕获异常")

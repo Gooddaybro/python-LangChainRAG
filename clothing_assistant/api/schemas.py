@@ -63,6 +63,24 @@ class ProductRef(BaseModel):
     rank_score: float | None = Field(default=None, description="来自 Python 工作流的可选排名得分。")
 
 
+class DemandIntent(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    version: str | None = Field(default=None, description="Java DemandIntent 契约版本。")
+    source: str | None = Field(default=None, description="意图解析来源，如 java-rule。")
+    rawQuery: str | None = Field(default=None, description="Java 解析时使用的原始用户问题。")
+    targetGender: str | None = Field(default=None, description="目标穿着性别，male 或 female。")
+    category: str | None = Field(default=None, description="Java 归一化后的硬筛选类目。")
+    scene: list[str] = Field(default_factory=list, description="场景偏好，如 commute。")
+    style: list[str] = Field(default_factory=list, description="风格偏好，如 minimal。")
+    budgetMax: float | None = Field(default=None, description="Java 解析出的预算上限。")
+    attributes: list[str] = Field(default_factory=list, description="显高、显瘦等属性偏好。")
+    hardFilters: list[str] = Field(default_factory=list, description="Java 已用于硬过滤的字段名。")
+    softPreferences: list[str] = Field(default_factory=list, description="Python 可用于排序解释的字段名。")
+    confidence: float | None = Field(default=None, description="Java 解析置信度。")
+    missingSlots: list[str] = Field(default_factory=list, description="仍缺失的关键槽位。")
+
+
 class SuggestedAction(BaseModel):
     type: str = Field(..., description="建议 Java 或前端执行的动作类型。")
     spu_id: int | str | None = Field(default=None, description="针对特定商品动作的可选 SPU ID。")
@@ -77,6 +95,7 @@ class PythonChatRequest(BaseModel):
     chat_history: list[ChatHistoryItem] = Field(default_factory=list, description="来自 Java 的只读对话历史。")
     user_context: UserContext = Field(default_factory=UserContext, description="来自 Java 的只读用户画像上下文。")
     candidates: list[ProductCandidate] = Field(default_factory=list, description="Java 为此轮对话过滤出的 SKU 候选列表。")
+    demand_intent: DemandIntent | None = Field(default=None, description="Java 统一解析出的需求意图。")
     debug: bool = Field(default=False, description="是否包含内部 LangGraph 调试数据。")
 
     @field_validator("request_id", "session_id", "query")
@@ -95,6 +114,12 @@ class PythonChatRequest(BaseModel):
 
     def candidate_dicts(self) -> list[dict[str, Any]]:
         return [item.model_dump(exclude_none=True, exclude_unset=True) for item in self.candidates]
+
+    def demand_intent_dict(self) -> dict[str, Any] | None:
+        if self.demand_intent is None:
+            return None
+
+        return self.demand_intent.model_dump(exclude_none=True, exclude_unset=True)
 
 
 class PythonChatResponse(BaseModel):

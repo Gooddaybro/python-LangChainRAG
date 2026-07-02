@@ -141,6 +141,7 @@ class ChatStreamEndpointTests(unittest.TestCase):
             session_id="session-stream-api-1",
             user_context={"user_id": 10001, "height_cm": 175.0, "weight_kg": 70.0},
             candidates=[],
+            demand_intent=None,
         )
 
     def test_chat_stream_done_event_does_not_expose_debug_payload(self):
@@ -219,6 +220,7 @@ class ChatStreamEndpointTests(unittest.TestCase):
             session_id="session-stream-api-2",
             user_context={},
             candidates=[],
+            demand_intent=None,
         )
 
     def test_chat_stream_returns_error_event_without_internal_details(self):

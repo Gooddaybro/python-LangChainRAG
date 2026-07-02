@@ -62,6 +62,7 @@ class ApiTests(unittest.TestCase):
             session_id="session-api-1",
             user_context={},
             candidates=[],
+            demand_intent=None,
         )
 
     def test_chat_passes_thread_id_to_langgraph_executor(self):
@@ -99,7 +100,51 @@ class ApiTests(unittest.TestCase):
             session_id="session-api-2",
             user_context={},
             candidates=[],
+            demand_intent=None,
         )
+
+    def test_chat_passes_demand_intent_to_langgraph_executor(self):
+        fake_result = {
+            "answer": "fake answer",
+            "debug": {
+                "intent_result": {"intent": "recommendation"},
+                "stop_reason": "final_answer",
+            },
+        }
+        demand_intent = {
+            "version": "demand-intent-v1",
+            "source": "java-rule",
+            "rawQuery": "女性裙子推荐",
+            "targetGender": "female",
+            "category": "半裙",
+            "scene": [],
+            "style": [],
+            "budgetMax": None,
+            "attributes": [],
+            "hardFilters": ["targetGender", "category"],
+            "softPreferences": [],
+            "confidence": 0.65,
+            "missingSlots": [],
+        }
+
+        with patch(
+            "clothing_assistant.api.app.run_langgraph_agent",
+            return_value=fake_result,
+        ) as mock_run:
+            response = self.client.post(
+                "/chat",
+                json={
+                    "request_id": "req-api-demand-intent",
+                    "session_id": "session-api-demand-intent",
+                    "query": "女性裙子推荐",
+                    "demand_intent": demand_intent,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        called_kwargs = mock_run.call_args.kwargs
+        self.assertEqual(called_kwargs["demand_intent"]["targetGender"], "female")
+        self.assertEqual(called_kwargs["demand_intent"]["category"], "半裙")
 
     def test_chat_hides_debug_when_disabled(self):
         fake_result = {
@@ -308,6 +353,7 @@ class ApiTests(unittest.TestCase):
             "chat_history",
             "user_context",
             "candidates",
+            "demand_intent",
             "debug",
         ]
 

@@ -27,6 +27,7 @@ class AgentState(TypedDict, total=False):
     run_id: str
     user_context: dict[str, Any]
     candidates: list[dict[str, Any]]
+    demand_intent: dict[str, Any]
 
     # 中间结果：每个节点只负责填充自己产生的数据。
     intent_result: dict[str, Any]

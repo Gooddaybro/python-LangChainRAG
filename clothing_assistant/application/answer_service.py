@@ -127,6 +127,7 @@ def build_response_from_state(state, trace_events=None):
         run_id=state.get("run_id"),
         user_context=state.get("user_context", {}),
         candidates=state.get("candidates", []),
+        demand_intent=state.get("demand_intent", {}),
         missing_info_result=state.get("missing_info_result", {}),
         structured_result=state.get("structured_result", {}),
         accepted_chunks=state.get("accepted_chunks", []),
@@ -158,6 +159,7 @@ def build_agent_response(
         run_id=None,
         user_context=None,
         candidates=None,
+        demand_intent=None,
         missing_info_result=None,
         structured_result=None,
         accepted_chunks=None,
@@ -178,6 +180,7 @@ def build_agent_response(
         user_query,
         user_context,
         tool_results,
+        demand_intent=demand_intent,
     )
 
     return {
@@ -191,6 +194,7 @@ def build_agent_response(
             "run_id": run_id,
             "user_context": user_context or {},
             "candidates": candidates or [],
+            "demand_intent": demand_intent or {},
             "product_refs": product_refs,
             "intent_result": intent_result,
             "selected_tools": selected_tools,

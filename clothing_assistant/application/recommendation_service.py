@@ -35,6 +35,20 @@ AVOID_TAG_TERMS = {
     "oversized": ["oversized", "过度宽松", "超宽松", "oversize"],
 }
 
+QUERY_TERM_ALIASES = [
+    (["裙子", "半裙", "半身裙", "百褶裙", "A字裙", "a字裙", "直筒裙"], ["裙", "半裙"]),
+]
+
+DEMAND_TERM_ALIASES = {
+    "半裙": ["半裙", "裙"],
+    "commute": ["commute", "通勤"],
+    "minimal": ["minimal", "简洁", "百搭"],
+    "slim": ["slim", "显瘦", "修身", "遮肉"],
+    "tall": ["tall", "显高", "高腰", "拉长比例"],
+    "male": ["male", "男"],
+    "female": ["female", "女"],
+}
+
 
 def normalize_text(value: Any) -> str:
     return str(value or "").strip().lower()
@@ -82,9 +96,21 @@ def collect_query_terms(user_query: str, user_context: dict[str, Any], preferenc
         "冬",
         "春",
         "秋",
+        "裙",
+        "半裙",
+        "外套",
+        "衬衫",
+        "裤",
+        "长裤",
+        "牛仔裤",
+        "休闲裤",
     ]:
         if value.lower() in normalized_query:
             terms.add(value.lower())
+
+    for signals, mapped_terms in QUERY_TERM_ALIASES:
+        if any(normalize_text(signal) in normalized_query for signal in signals):
+            terms.update(normalize_text(term) for term in mapped_terms)
 
     for key in ["preferred_styles", "preferred_colors", "preferred_categories"]:
         values = user_context.get(key) or []
@@ -97,6 +123,34 @@ def collect_query_terms(user_query: str, user_context: dict[str, Any], preferenc
             terms.add(normalize_text(value))
 
     return terms
+
+
+def collect_demand_intent_terms(demand_intent: dict[str, Any] | None) -> set[str]:
+    if not demand_intent:
+        return set()
+
+    terms = set()
+
+    for key in ["targetGender", "category"]:
+        value = demand_intent.get(key)
+        if value:
+            add_term_with_aliases(terms, value)
+
+    for key in ["scene", "style", "attributes"]:
+        for value in demand_intent.get(key) or []:
+            add_term_with_aliases(terms, value)
+
+    return terms
+
+
+def add_term_with_aliases(terms: set[str], value: Any) -> None:
+    normalized = normalize_text(value)
+    if not normalized:
+        return
+
+    terms.add(normalized)
+    for alias in DEMAND_TERM_ALIASES.get(normalized, []):
+        terms.add(normalize_text(alias))
 
 
 def candidate_terms(candidate: dict[str, Any]) -> set[str]:
@@ -126,7 +180,15 @@ def collect_preferred_colors(user_context: dict[str, Any], preferences: dict[str
     return colors
 
 
-def resolve_budget_max(user_context: dict[str, Any], preferences: dict[str, Any]) -> float | None:
+def resolve_budget_max(
+    user_context: dict[str, Any],
+    preferences: dict[str, Any],
+    demand_intent: dict[str, Any] | None = None,
+) -> float | None:
+    demand_budget = as_number((demand_intent or {}).get("budgetMax"))
+    if demand_budget is not None:
+        return demand_budget
+
     context_budget = as_number(user_context.get("budget_max"))
     preference_budget = as_number(preferences.get("budget_max"))
     return context_budget if context_budget is not None else preference_budget
@@ -230,6 +292,7 @@ def score_candidate(
     alternative_size: str | None,
     user_context: dict[str, Any],
     preferences: dict[str, Any],
+    demand_intent: dict[str, Any] | None = None,
 ) -> tuple[float, list[str]]:
     score = 0.0
     score_parts = []
@@ -252,7 +315,7 @@ def score_candidate(
         score_parts.append("风格、季节或场景标签匹配")
 
     sale_price = as_number(candidate.get("sale_price"))
-    budget_max = resolve_budget_max(user_context, preferences)
+    budget_max = resolve_budget_max(user_context, preferences, demand_intent)
     if sale_price is not None and budget_max is not None and sale_price > budget_max:
         return -1.0, []
 
@@ -311,6 +374,7 @@ def build_product_refs(
     user_query: str,
     user_context: dict[str, Any] | None,
     tool_results: dict[str, Any] | None,
+    demand_intent: dict[str, Any] | None = None,
     limit: int = 3,
 ) -> list[dict[str, Any]]:
     """Select refs only from Java candidates; never invent product facts."""
@@ -327,6 +391,7 @@ def build_product_refs(
     recommended_size = get_recommended_size(tool_results)
     alternative_size = get_alternative_size(tool_results)
     query_terms = collect_query_terms(user_query, user_context, preferences)
+    query_terms.update(collect_demand_intent_terms(demand_intent))
 
     scored_candidates = []
     seen_skus = set()
@@ -344,6 +409,7 @@ def build_product_refs(
             alternative_size,
             user_context,
             preferences,
+            demand_intent,
         )
         if score < 0:
             continue
