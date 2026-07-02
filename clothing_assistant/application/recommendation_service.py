@@ -44,6 +44,10 @@ def normalize_size(value: Any) -> str:
     return str(value or "").strip().upper()
 
 
+def normalize_identifier(value: Any) -> str:
+    return str(value).strip() if value is not None else ""
+
+
 def as_number(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -124,6 +128,14 @@ def collect_preferred_colors(user_context: dict[str, Any], preferences: dict[str
     colors = {normalize_text(value) for value in user_context.get("preferred_colors") or [] if value}
     colors.update(normalize_text(value) for value in preferences.get("preferred_colors") or [] if value)
     return colors
+
+
+def collect_context_ids(user_context: dict[str, Any], key: str) -> set[str]:
+    return {normalize_identifier(value) for value in user_context.get(key) or [] if normalize_identifier(value)}
+
+
+def collect_context_terms(user_context: dict[str, Any], key: str) -> set[str]:
+    return {normalize_text(value) for value in user_context.get(key) or [] if normalize_text(value)}
 
 
 def resolve_budget_max(user_context: dict[str, Any], preferences: dict[str, Any]) -> float | None:
@@ -223,6 +235,36 @@ def build_reason(
     return f"{name}：" + "，".join(details) + "。"
 
 
+def behavior_context_score(candidate: dict[str, Any], user_context: dict[str, Any], score_parts: list[str]) -> float:
+    score = 0.0
+    candidate_spu_id = normalize_identifier(candidate.get("spu_id"))
+
+    if candidate_spu_id and candidate_spu_id in collect_context_ids(user_context, "recent_interest_spu_ids"):
+        score += 0.12
+        score_parts.append("近期行为显示你关注过类似商品")
+
+    if candidate_spu_id and candidate_spu_id in collect_context_ids(user_context, "recent_cart_spu_ids"):
+        score += 0.16
+        score_parts.append("你近期有类似加购意图")
+
+    if candidate_spu_id and candidate_spu_id in collect_context_ids(user_context, "recent_purchased_spu_ids"):
+        score += 0.08
+        score_parts.append("与你近期购买偏好相近")
+
+    candidate_category = normalize_text(candidate.get("category"))
+    if candidate_category and candidate_category in collect_context_terms(user_context, "behavior_preferred_categories"):
+        score += 0.08
+        score_parts.append("匹配近期浏览或购买分类")
+
+    preferred_styles = collect_context_terms(user_context, "behavior_preferred_styles")
+    candidate_styles = {normalize_text(value) for value in candidate.get("style_tags") or [] if value}
+    if preferred_styles and candidate_styles & preferred_styles:
+        score += 0.08
+        score_parts.append("匹配近期偏好的风格")
+
+    return score
+
+
 def score_candidate(
     candidate: dict[str, Any],
     query_terms: set[str],
@@ -271,6 +313,8 @@ def score_candidate(
     if candidate_color and candidate_color in preferred_colors:
         score += 0.1
         score_parts.append(f"{candidate.get('color')}匹配颜色偏好")
+
+    score += behavior_context_score(candidate, user_context, score_parts)
 
     text = candidate_text(candidate)
 

@@ -31,6 +31,11 @@ class UserContext(BaseModel):
     preferred_categories: list[str] = Field(default_factory=list, description="用户偏好的商品分类。")
     budget_min: float | None = Field(default=None, description="预算下限（人民币）。")
     budget_max: float | None = Field(default=None, description="预算上限（人民币）。")
+    recent_interest_spu_ids: list[int | str] = Field(default_factory=list, description="Java 汇总的近期兴趣 SPU。")
+    recent_cart_spu_ids: list[int | str] = Field(default_factory=list, description="Java 汇总的近期加购 SPU。")
+    recent_purchased_spu_ids: list[int | str] = Field(default_factory=list, description="Java 汇总的近期购买 SPU。")
+    behavior_preferred_categories: list[str] = Field(default_factory=list, description="Java 行为摘要中的偏好分类。")
+    behavior_preferred_styles: list[str] = Field(default_factory=list, description="Java 行为摘要中的偏好风格。")
 
 
 class ProductCandidate(BaseModel):

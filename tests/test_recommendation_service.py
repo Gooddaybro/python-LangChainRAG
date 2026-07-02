@@ -238,6 +238,43 @@ class RecommendationServiceTests(unittest.TestCase):
         self.assertIn("价格 299 在预算 300 内", reason)
         self.assertIn("黑色匹配颜色偏好", reason)
 
+    def test_behavior_context_boosts_recent_interest_candidate(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "通勤轻薄外套",
+                "category": "外套",
+                "stock_status": "in_stock",
+                "style_tags": ["commute"],
+                "sale_price": 299,
+            },
+            {
+                "spu_id": 1002,
+                "sku_id": 2002,
+                "name": "休闲卫衣",
+                "category": "卫衣",
+                "stock_status": "in_stock",
+                "style_tags": ["casual"],
+                "sale_price": 199,
+            },
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "推荐一件外套",
+            {
+                "recent_interest_spu_ids": [1001],
+                "behavior_preferred_categories": ["外套"],
+                "behavior_preferred_styles": ["commute"],
+            },
+            {},
+        )
+
+        self.assertEqual(refs[0]["spu_id"], 1001)
+        self.assertIn("近期行为显示你关注过类似商品", refs[0]["reason"])
+
     def test_fuzzy_student_budget_query_prefers_matching_candidate(self):
         candidates = [
             {
