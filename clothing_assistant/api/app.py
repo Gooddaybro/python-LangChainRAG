@@ -11,6 +11,7 @@ from clothing_assistant.agent.langgraph_executor import run_langgraph_agent
 from clothing_assistant.config_data import PROJECT_API_TITLE
 
 logger = logging.getLogger(__name__)
+INTERNAL_ERROR_MESSAGE = "AI service failed to process the request."
 
 
 app = FastAPI(
@@ -48,7 +49,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={
             "error": "internal_server_error",
             "request_id": await extract_request_id(request),
-            "message": "AI 服务处理请求失败。",
+            "message": INTERNAL_ERROR_MESSAGE,
         },
     )
 
@@ -178,7 +179,7 @@ def chat(request: PythonChatRequest):
             content={
                 "error": "internal_server_error",
                 "request_id": request.request_id,
-                "message": "AI 服务处理请求失败。",
+                "message": INTERNAL_ERROR_MESSAGE,
             },
         )
 
@@ -202,7 +203,7 @@ def generate_chat_stream(request: PythonChatRequest):
         )
     except Exception:
         logger.exception("POST /chat/stream 接口发生未捕获异常")
-        yield build_error_event("internal_error", "AI 服务处理请求失败。")
+        yield build_error_event("internal_error", INTERNAL_ERROR_MESSAGE)
         return
 
     yield from iter_stream_events(result, request.request_id)
