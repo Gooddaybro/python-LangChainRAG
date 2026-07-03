@@ -34,6 +34,7 @@ AVOID_TAG_TERMS = {
     "overly_formal": ["overly_formal", "过度正式", "商务正装", "正式商务"],
     "oversized": ["oversized", "过度宽松", "超宽松", "oversize"],
 }
+RAG_FACT_FORBIDDEN_TERMS = ["sku", "价格", "库存", "有货", "无货", "下架", "上架", "元"]
 
 
 def normalize_text(value: Any) -> str:
@@ -82,6 +83,15 @@ def collect_query_terms(user_query: str, user_context: dict[str, Any], preferenc
         "显瘦",
         "宽松",
         "修身",
+        "外套",
+        "夹克",
+        "T恤",
+        "衬衫",
+        "卫衣",
+        "裤子",
+        "西装",
+        "半裙",
+        "短裤",
         "夏",
         "冬",
         "春",
@@ -103,16 +113,26 @@ def collect_query_terms(user_query: str, user_context: dict[str, Any], preferenc
     return terms
 
 
+def iterable_candidate_values(value: Any) -> list[Any]:
+    if value is None:
+        return []
+
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+
+    return [value]
+
+
 def candidate_terms(candidate: dict[str, Any]) -> set[str]:
     terms = set()
 
-    for key in ["name", "category", "color", "material", "fit_type"]:
+    for key in ["name", "category", "category_name", "color", "material", "materials", "fit_type"]:
         value = normalize_text(candidate.get(key))
         if value:
             terms.add(value)
 
-    for key in ["season", "style_tags", "attribute_tags", "visual_effect_tags", "occasion_tags"]:
-        for value in candidate.get(key) or []:
+    for key in ["season", "seasons", "style_tags", "attribute_tags", "visual_effect_tags", "occasion_tags"]:
+        for value in iterable_candidate_values(candidate.get(key)):
             normalized = normalize_text(value)
             if normalized:
                 terms.add(normalized)
@@ -214,6 +234,7 @@ def build_reason(
     recommended_size: str | None,
     alternative_size: str | None,
     score_parts: list[str],
+    rag_explanation_parts: list[str] | None = None,
 ) -> str:
     name = candidate.get("name") or "这件商品"
     details = []
@@ -228,11 +249,38 @@ def build_reason(
         details.append("当前候选显示有库存")
 
     details.extend(score_parts)
+    details.extend(rag_explanation_parts or [])
 
     if not details:
         details.append("符合本轮 Java 候选商品条件")
 
     return f"{name}：" + "，".join(details) + "。"
+
+
+def summarize_rag_content(content: str, max_length: int = 48) -> str:
+    summary = " ".join(str(content or "").split())
+    if len(summary) <= max_length:
+        return summary
+
+    return summary[:max_length].rstrip("，。,. ") + "..."
+
+
+def extract_rag_explanation_parts(tool_results: dict[str, Any]) -> list[str]:
+    rag_result = tool_results.get("rag_tool") or {}
+    chunks = rag_result.get("retrieved_chunks") or []
+    explanation_parts = []
+
+    for chunk in chunks:
+        content = str(chunk.get("content") or "")
+        normalized = normalize_text(content)
+        if not content.strip():
+            continue
+        if any(term in normalized for term in RAG_FACT_FORBIDDEN_TERMS):
+            continue
+        explanation_parts.append(f"RAG 知识提示：{summarize_rag_content(content)}")
+        break
+
+    return explanation_parts
 
 
 def behavior_context_score(candidate: dict[str, Any], user_context: dict[str, Any], score_parts: list[str]) -> float:
@@ -251,7 +299,7 @@ def behavior_context_score(candidate: dict[str, Any], user_context: dict[str, An
         score += 0.08
         score_parts.append("与你近期购买偏好相近")
 
-    candidate_category = normalize_text(candidate.get("category"))
+    candidate_category = normalize_text(candidate.get("category") or candidate.get("category_name"))
     if candidate_category and candidate_category in collect_context_terms(user_context, "behavior_preferred_categories"):
         score += 0.08
         score_parts.append("匹配近期浏览或购买分类")
@@ -358,12 +406,41 @@ def build_product_refs(
     limit: int = 3,
 ) -> list[dict[str, Any]]:
     """Select refs only from Java candidates; never invent product facts."""
+    return build_product_rerank_result(
+        candidates,
+        intent_result,
+        user_query,
+        user_context,
+        tool_results,
+        limit=limit,
+    )["product_refs"]
+
+
+def build_product_rerank_result(
+    candidates: list[dict[str, Any]] | None,
+    intent_result: dict[str, Any] | None,
+    user_query: str,
+    user_context: dict[str, Any] | None,
+    tool_results: dict[str, Any] | None,
+    limit: int = 3,
+) -> dict[str, Any]:
+    """Rank Java-provided candidates and expose debug evidence for the AI layer."""
     if not candidates:
-        return []
+        return {
+            "product_refs": [],
+            "semantic_preferences": parse_preferences(user_query),
+            "candidate_scores": [],
+            "recommendation_source": "java_candidates_with_ai_rerank",
+        }
 
     intent = (intent_result or {}).get("intent")
     if intent not in RECOMMENDABLE_INTENTS:
-        return []
+        return {
+            "product_refs": [],
+            "semantic_preferences": parse_preferences(user_query),
+            "candidate_scores": [],
+            "recommendation_source": "java_candidates_with_ai_rerank",
+        }
 
     user_context = user_context or {}
     tool_results = tool_results or {}
@@ -371,8 +448,10 @@ def build_product_refs(
     recommended_size = get_recommended_size(tool_results)
     alternative_size = get_alternative_size(tool_results)
     query_terms = collect_query_terms(user_query, user_context, preferences)
+    rag_explanation_parts = extract_rag_explanation_parts(tool_results)
 
     scored_candidates = []
+    candidate_scores = []
     seen_skus = set()
 
     for index, candidate in enumerate(candidates):
@@ -389,13 +468,24 @@ def build_product_refs(
             user_context,
             preferences,
         )
-        if score < 0:
-            continue
+        selected = score >= 0
 
-        seen_skus.add(sku_id)
-        scored_candidates.append((score, index, candidate, score_parts))
+        candidate_scores.append(
+            {
+                "spu_id": spu_id,
+                "sku_id": sku_id,
+                "rank_score": round(score, 4),
+                "selected": selected,
+                "score_parts": score_parts,
+            }
+        )
+
+        if selected:
+            seen_skus.add(sku_id)
+            scored_candidates.append((score, index, candidate, score_parts))
 
     scored_candidates.sort(key=lambda item: (-item[0], item[1]))
+    candidate_scores.sort(key=lambda item: (-item["rank_score"], str(item["spu_id"]), str(item["sku_id"])))
     refs = []
 
     for score, _, candidate, score_parts in scored_candidates[:limit]:
@@ -403,9 +493,24 @@ def build_product_refs(
             {
                 "spu_id": candidate["spu_id"],
                 "sku_id": candidate["sku_id"],
-                "reason": build_reason(candidate, recommended_size, alternative_size, score_parts),
+                "reason": build_reason(
+                    candidate,
+                    recommended_size,
+                    alternative_size,
+                    score_parts,
+                    rag_explanation_parts=rag_explanation_parts,
+                ),
                 "rank_score": round(score, 4),
             }
         )
 
-    return refs
+    selected_ref_keys = {(ref["spu_id"], ref["sku_id"]) for ref in refs}
+    for candidate_score in candidate_scores:
+        candidate_score["selected"] = (candidate_score["spu_id"], candidate_score["sku_id"]) in selected_ref_keys
+
+    return {
+        "product_refs": refs,
+        "semantic_preferences": preferences,
+        "candidate_scores": candidate_scores,
+        "recommendation_source": "java_candidates_with_ai_rerank",
+    }

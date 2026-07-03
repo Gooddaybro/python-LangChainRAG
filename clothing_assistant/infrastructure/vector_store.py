@@ -1,5 +1,8 @@
 import json
 import math
+from datetime import datetime, timezone
+from hashlib import sha256
+from pathlib import Path
 
 from langchain_community.embeddings import DashScopeEmbeddings
 
@@ -15,6 +18,7 @@ from clothing_assistant.infrastructure.knowledge_base import build_knowledge_chu
 _EMBEDDINGS_CACHE = None
 _VECTOR_DATA_CACHE = None
 VECTOR_STORE_FILE = VECTOR_DB_DIR / "simple_vector_store.json"
+VECTOR_STORE_META_FILE = VECTOR_DB_DIR / "vector_store_meta.json"
 
 
 # 初始化 embedding 模型：知识文本和用户问题必须使用同一个向量模型，向量才有可比性。
@@ -42,6 +46,59 @@ def load_vector_data():
         _VECTOR_DATA_CACHE = json.load(file)
 
     return _VECTOR_DATA_CACHE
+
+
+def build_source_file_meta(knowledge_chunks):
+    source_paths = {}
+
+    for chunk in knowledge_chunks:
+        file_name = chunk["file_name"]
+        file_path = chunk.get("file_path")
+        source_paths[file_name] = file_path
+
+    source_files = []
+
+    for file_name, file_path in sorted(source_paths.items()):
+        path = Path(file_path) if file_path else None
+        if path and path.exists():
+            content = path.read_bytes()
+            updated_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+        else:
+            content = "\n".join(
+                chunk["content"]
+                for chunk in knowledge_chunks
+                if chunk["file_name"] == file_name
+            ).encode("utf-8")
+            updated_at = None
+
+        source_files.append(
+            {
+                "file_name": file_name,
+                "sha256": sha256(content).hexdigest(),
+                "updated_at": updated_at,
+            }
+        )
+
+    return source_files
+
+
+def build_vector_store_meta(knowledge_chunks):
+    built_at = datetime.now(timezone.utc).isoformat()
+    return {
+        "version": built_at,
+        "source_files": build_source_file_meta(knowledge_chunks),
+        "chunk_count": len(knowledge_chunks),
+        "embedding_provider": "dashscope",
+        "built_at": built_at,
+    }
+
+
+def load_vector_store_meta():
+    if not VECTOR_STORE_META_FILE.exists():
+        return {}
+
+    with VECTOR_STORE_META_FILE.open("r", encoding="utf-8") as file:
+        return json.load(file)
 
 
 # 计算两个向量的余弦距离：距离越小，说明用户问题和知识块越相似。
@@ -88,6 +145,9 @@ def rebuild_vector_store(knowledge_chunks):
     # 写入 JSON 是为了教学阶段可观察：能明确看到“文本块已经被转成向量并保存起来”。
     with VECTOR_STORE_FILE.open("w", encoding="utf-8") as file:
         json.dump(vector_records, file, ensure_ascii=False)
+
+    with VECTOR_STORE_META_FILE.open("w", encoding="utf-8") as file:
+        json.dump(build_vector_store_meta(knowledge_chunks), file, ensure_ascii=False)
 
     _VECTOR_DATA_CACHE = vector_records
 

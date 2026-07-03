@@ -4,7 +4,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from clothing_assistant.agent.router import INTENT_CHAT, INTENT_UNKNOWN
 from clothing_assistant.agent.tracing import persist_trace_if_enabled
-from clothing_assistant.application.recommendation_service import build_product_refs
+from clothing_assistant.application.recommendation_service import build_product_rerank_result
 from clothing_assistant.infrastructure.llm_client import get_chat_model
 
 
@@ -172,13 +172,14 @@ def build_agent_response(
 ):
     """统一 Agent 输出契约。"""
     rag_result = tool_results.get("rag_tool") or {}
-    product_refs = build_product_refs(
+    rerank_result = build_product_rerank_result(
         candidates,
         intent_result,
         user_query,
         user_context,
         tool_results,
     )
+    product_refs = rerank_result["product_refs"]
 
     return {
         "answer": answer,
@@ -192,12 +193,17 @@ def build_agent_response(
             "user_context": user_context or {},
             "candidates": candidates or [],
             "product_refs": product_refs,
+            "selected_product_refs": product_refs,
+            "semantic_preferences": rerank_result["semantic_preferences"],
+            "candidate_scores": rerank_result["candidate_scores"],
+            "recommendation_source": rerank_result["recommendation_source"],
             "intent_result": intent_result,
             "selected_tools": selected_tools,
             "used_history": memory_result["used_history"],
             "ignored_history_reason": memory_result["ignored_history_reason"],
             "retrieval_query": rag_result.get("retrieval_query"),
             "retrieved_chunks": rag_result.get("retrieved_chunks", []),
+            "rag_meta": rag_result.get("rag_meta", {}),
             "missing_info_result": missing_info_result or {},
             "structured_result": structured_result or {},
             "accepted_chunks": accepted_chunks or [],

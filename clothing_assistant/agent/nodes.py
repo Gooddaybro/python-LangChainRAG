@@ -18,9 +18,11 @@ from clothing_assistant.agent.router import (
     INTENT_INVENTORY_CHECK,
     INTENT_POLICY_QA,
     INTENT_PRICE_CHECK,
+    INTENT_RECOMMENDATION,
     INTENT_SIZE_RECOMMENDATION,
 )
 from clothing_assistant.agent.state import make_trace
+from clothing_assistant.application.recommendation_service import build_product_refs
 from clothing_assistant.agent.tool_registry import (
     build_default_tool_registry,
     execute_tool_spec,
@@ -403,6 +405,53 @@ def fallback_answer_node(state):
     }
 
 
+def build_candidate_recommendation_refs(state):
+    return build_product_refs(
+        state.get("candidates", []),
+        state.get("intent_result", {}),
+        state.get("user_query", ""),
+        state.get("user_context", {}),
+        state.get("tool_results", {}),
+    )
+
+
+def has_candidate_backed_recommendation(state):
+    return (
+        state.get("intent_result", {}).get("intent") == INTENT_RECOMMENDATION
+        and bool(build_candidate_recommendation_refs(state))
+    )
+
+
+def build_candidate_recommendation_draft(state):
+    refs = build_candidate_recommendation_refs(state)
+    if not refs:
+        return None
+
+    candidate_by_sku = {
+        candidate.get("sku_id"): candidate
+        for candidate in state.get("candidates", [])
+        if candidate.get("sku_id") is not None
+    }
+    lines = ["我从当前商品库候选里优先推荐："]
+
+    for index, ref in enumerate(refs, start=1):
+        candidate = candidate_by_sku.get(ref.get("sku_id"), {})
+        name = candidate.get("name") or f"商品 {ref.get('spu_id')}"
+        color = candidate.get("color")
+        size = candidate.get("size")
+        price = candidate.get("sale_price")
+        details = " / ".join(str(value) for value in [color, size, f"{price:g} 元" if isinstance(price, (int, float)) else None] if value)
+        prefix = f"{index}. {name}"
+        if details:
+            prefix = f"{prefix}（{details}）"
+        reason = ref.get("reason", "符合当前筛选条件。")
+        if isinstance(reason, str) and reason.startswith(f"{name}："):
+            reason = reason.removeprefix(f"{name}：")
+        lines.append(f"{prefix}：{reason}")
+
+    return "\n".join(lines)
+
+
 def build_structured_draft(structured_result):
     lookup_type = structured_result.get("lookup_type")
     name = structured_result.get("matched_product_name") or "这件商品"
@@ -472,11 +521,15 @@ def answer_generator_node(state, answer_generator=None):
     generation_attempts = state.get("generation_attempts", 0) + 1
     structured_result = state.get("structured_result") or {}
     structured_draft = build_structured_draft(structured_result)
+    recommendation_draft = build_candidate_recommendation_draft(state)
     size_draft = build_size_recommendation_draft(state)
 
     if structured_draft:
         draft_answer = structured_draft
         final_prompt = "structured_lookup draft，不调用大模型。"
+    elif recommendation_draft:
+        draft_answer = recommendation_draft
+        final_prompt = "java_candidate_recommendation draft，不调用大模型。"
     elif size_draft:
         draft_answer = size_draft
         final_prompt = "size_tool draft，不调用大模型。"
@@ -543,6 +596,14 @@ def answer_validator_node(state):
         }
 
     if state.get("tool_results", {}).get("rag_tool") and not state.get("accepted_chunks"):
+        if has_candidate_backed_recommendation(state):
+            return {
+                "answer": state.get("draft_answer", ""),
+                "validation_result": validation_result,
+                "stop_reason": "final_answer",
+                "trace_events": make_trace("answer_validated", grounded=True, source="java_candidates"),
+            }
+
         answer = "当前知识库没有检索到足够可靠的资料，暂时不能给出确定建议。你可以补充商品名、场景或联系人工客服确认。"
         validation_result = {
             "grounded": False,
@@ -705,6 +766,9 @@ def route_after_retrieval_grader(state):
     status = (state.get("retrieval_route") or {}).get("status")
 
     if status == "good":
+        return "answer_generator"
+
+    if status in {"weak", "empty"} and has_candidate_backed_recommendation(state):
         return "answer_generator"
 
     if status in {"weak", "empty"}:

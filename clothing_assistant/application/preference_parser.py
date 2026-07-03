@@ -97,6 +97,7 @@ VERSATILE_SIGNALS = [
 COMMUTE_SIGNALS = ["通勤", "上班", "办公室", "职场", "上班穿", "上班通勤"]
 DATE_SIGNALS = ["约会", "见面", "见男朋友", "见女朋友", "约会穿搭"]
 WARM_SIGNALS = ["保暖", "怕冷", "厚实", "秋冬保暖", "暖和"]
+NOT_TOO_FORMAL_SIGNALS = ["不要太正式", "别太正式", "不想太成熟", "不要太成熟", "不商务", "别商务"]
 
 SEASON_SIGNALS = [
     (["春", "春天", "春季"], "spring"),
@@ -200,6 +201,11 @@ def parse_rule_preferences(user_query: str) -> dict[str, Any]:
     if contains_any_signal(normalized, WARM_SIGNALS):
         append_unique(preferences["style_tags"], ["warm"])
         append_unique(preferences["season"], ["autumn", "winter"])
+        matched_signals += 1
+
+    if contains_any_signal(normalized, NOT_TOO_FORMAL_SIGNALS):
+        append_unique(preferences["avoid_tags"], ["overly_formal"])
+        append_unique(preferences["style_tags"], ["casual", "minimal"])
         matched_signals += 1
 
     for signals, season in SEASON_SIGNALS:

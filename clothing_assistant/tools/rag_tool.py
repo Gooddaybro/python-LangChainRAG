@@ -1,4 +1,4 @@
-from clothing_assistant.infrastructure.vector_store import search_similar_chunks
+from clothing_assistant.infrastructure.vector_store import load_vector_store_meta, search_similar_chunks
 
 
 DEFAULT_AGENT_RAG_TOP_K = 3
@@ -60,6 +60,7 @@ def run_rag_tool(user_query, top_k=DEFAULT_AGENT_RAG_TOP_K, metadata_filter=None
         "retrieval_query": retrieval_query,
         "retrieved_chunks": simplified_chunks,
         "source_count": len(simplified_chunks),
+        "rag_meta": load_vector_store_meta(),
     }
 
 
