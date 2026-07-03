@@ -430,7 +430,7 @@ def build_product_rerank_result(
             "product_refs": [],
             "semantic_preferences": parse_preferences(user_query),
             "candidate_scores": [],
-            "recommendation_source": "java_candidates_with_ai_rerank",
+            "recommendation_source": "java_candidates_empty",
         }
 
     intent = (intent_result or {}).get("intent")
@@ -439,7 +439,7 @@ def build_product_rerank_result(
             "product_refs": [],
             "semantic_preferences": parse_preferences(user_query),
             "candidate_scores": [],
-            "recommendation_source": "java_candidates_with_ai_rerank",
+            "recommendation_source": "not_recommendable_intent",
         }
 
     user_context = user_context or {}

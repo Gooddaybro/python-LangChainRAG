@@ -50,6 +50,32 @@ class RecommendationServiceTests(unittest.TestCase):
         self.assertEqual(result["candidate_scores"][0]["spu_id"], 1001)
         self.assertGreater(result["candidate_scores"][0]["rank_score"], result["candidate_scores"][1]["rank_score"])
 
+    def test_rerank_result_marks_empty_candidate_source(self):
+        result = build_product_rerank_result(
+            [],
+            {"intent": "recommendation"},
+            "推荐一件通勤外套",
+            {},
+            {},
+        )
+
+        self.assertEqual(result["product_refs"], [])
+        self.assertEqual(result["candidate_scores"], [])
+        self.assertEqual(result["recommendation_source"], "java_candidates_empty")
+
+    def test_rerank_result_marks_non_recommendable_intent_source(self):
+        result = build_product_rerank_result(
+            [{"spu_id": 1001, "sku_id": 2001, "name": "通勤外套"}],
+            {"intent": "chat"},
+            "你是谁？",
+            {},
+            {},
+        )
+
+        self.assertEqual(result["product_refs"], [])
+        self.assertEqual(result["candidate_scores"], [])
+        self.assertEqual(result["recommendation_source"], "not_recommendable_intent")
+
     def test_bare_height_weight_pair_is_routed_as_size_signal(self):
         result = intent_router("明天面试想要显瘦 177 130 该怎么选")
 

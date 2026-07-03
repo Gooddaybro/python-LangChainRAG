@@ -42,6 +42,13 @@ def simplify_chunk(chunk):
     }
 
 
+def safe_load_vector_store_meta():
+    try:
+        return load_vector_store_meta()
+    except Exception:
+        return {}
+
+
 def run_rag_tool(user_query, top_k=DEFAULT_AGENT_RAG_TOP_K, metadata_filter=None, query_type=None):
     """Agent RAG 工具入口：只负责检索知识库，不负责生成最终回答。"""
     retrieval_query = build_rag_retrieval_query(user_query, query_type=query_type)
@@ -60,7 +67,7 @@ def run_rag_tool(user_query, top_k=DEFAULT_AGENT_RAG_TOP_K, metadata_filter=None
         "retrieval_query": retrieval_query,
         "retrieved_chunks": simplified_chunks,
         "source_count": len(simplified_chunks),
-        "rag_meta": load_vector_store_meta(),
+        "rag_meta": safe_load_vector_store_meta(),
     }
 
 

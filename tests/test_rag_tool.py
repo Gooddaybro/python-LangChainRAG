@@ -29,6 +29,20 @@ class RagToolTests(unittest.TestCase):
         self.assertEqual(result["rag_meta"]["version"], "2026-07-03T18:30:00+08:00")
         self.assertEqual(result["rag_meta"]["chunk_count"], 12)
 
+    def test_rag_tool_ignores_broken_vector_store_meta(self):
+        with patch(
+            "clothing_assistant.tools.rag_tool.search_similar_chunks",
+            return_value=[],
+        ), patch(
+            "clothing_assistant.tools.rag_tool.load_vector_store_meta",
+            side_effect=ValueError("broken meta"),
+        ):
+            result = run_rag_tool("推荐一件通勤外套", query_type="recommendation")
+
+        self.assertEqual(result["retrieved_chunks"], [])
+        self.assertEqual(result["source_count"], 0)
+        self.assertEqual(result["rag_meta"], {})
+
 
 if __name__ == "__main__":
     unittest.main()
