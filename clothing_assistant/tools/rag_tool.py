@@ -45,11 +45,15 @@ def simplify_chunk(chunk):
 def run_rag_tool(user_query, top_k=DEFAULT_AGENT_RAG_TOP_K, metadata_filter=None, query_type=None):
     """Agent RAG 工具入口：只负责检索知识库，不负责生成最终回答。"""
     retrieval_query = build_rag_retrieval_query(user_query, query_type=query_type)
-    retrieved_chunks = search_similar_chunks(
-        retrieval_query,
-        top_k=top_k,
-        metadata_filter=metadata_filter,
-    )
+    try:
+        retrieved_chunks = search_similar_chunks(
+            retrieval_query,
+            top_k=top_k,
+            metadata_filter=metadata_filter,
+        )
+    except FileNotFoundError:
+        retrieved_chunks = []
+
     simplified_chunks = [simplify_chunk(chunk) for chunk in retrieved_chunks]
 
     return {
