@@ -165,6 +165,46 @@ class AgentPipelineTests(unittest.TestCase):
         self.assertIn("通勤夹克", result["answer"])
         self.assertNotIn("当前知识库没有检索到", result["answer"])
 
+    def test_outfit_search_with_slimming_budget_uses_candidates_when_rag_is_empty(self):
+        registry = build_default_tool_registry(
+            rag_runner=fake_empty_rag_runner,
+            policy_runner=fake_policy_runner,
+            size_runner=fake_size_runner,
+        )
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "通勤轻薄风衣",
+                "category_name": "外套",
+                "fit_type": "合身",
+                "color": "黑色",
+                "size": "M",
+                "materials": "棉混纺",
+                "seasons": ["spring"],
+                "style_tags": ["commute", "basic"],
+                "sale_price": 439.0,
+                "stock_status": "in_stock",
+                "attribute_tags": ["适用场景:通勤", "风格:简洁"],
+            }
+        ]
+
+        result = run_langgraph_agent(
+            "我想找一套适合春天通勤的穿搭，显瘦一点，预算500以内",
+            tool_registry=registry,
+            answer_generator=fake_answer_generator,
+            candidates=candidates,
+            user_context={"user_id": 1},
+            thread_id="test-outfit-search-candidates",
+        )
+
+        self.assertEqual(result["debug"]["intent_result"]["intent"], "recommendation")
+        self.assertEqual(result["debug"]["retrieval_route"]["status"], "empty")
+        self.assertEqual(result["debug"]["stop_reason"], "final_answer")
+        self.assertEqual(result["product_refs"][0]["spu_id"], 1001)
+        self.assertIn("通勤轻薄风衣", result["answer"])
+        self.assertNotIn("当前知识库没有检索到", result["answer"])
+
     def test_policy_fallback_stops_before_answer_generation(self):
         registry = build_default_tool_registry(
             rag_runner=fake_rag_runner,

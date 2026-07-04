@@ -88,7 +88,10 @@ PRICE_KEYWORDS = [
 
 RECOMMENDATION_KEYWORDS = [
     "推荐",
+    "想找",
     "想买",
+    "穿搭",
+    "通勤",
     "适合通勤",
     "适合日常",
     "导购",
@@ -108,6 +111,7 @@ RECOMMENDATION_KEYWORDS = [
     "平价",
     "便宜",
     "不贵",
+    "预算",
     "预算有限",
     "百搭",
     "好搭",
