@@ -205,6 +205,67 @@ class AgentPipelineTests(unittest.TestCase):
         self.assertIn("通勤轻薄风衣", result["answer"])
         self.assertNotIn("当前知识库没有检索到", result["answer"])
 
+    def test_price_check_uses_java_candidate_price(self):
+        candidates = [
+            {
+                "spu_id": 9101,
+                "sku_id": 9201,
+                "spu_code": "JAVA_ONLY_TSHIRT",
+                "sku_code": "JAVA_ONLY_TSHIRT-BLACK-L",
+                "name": "候选款测试T恤",
+                "category": "T恤",
+                "color": "黑色",
+                "size": "L",
+                "sale_price": 123.0,
+                "stock_status": "in_stock",
+                "available_stock": 17,
+            }
+        ]
+
+        result = run_langgraph_agent(
+            "候选款测试T恤多少钱？",
+            candidates=candidates,
+            user_context={"user_id": 1},
+            thread_id="test-price-uses-java-candidates",
+        )
+
+        self.assertEqual(result["debug"]["stop_reason"], "final_answer")
+        self.assertIn("候选款测试T恤", result["answer"])
+        self.assertIn("123", result["answer"])
+        self.assertNotIn("99", result["answer"])
+        self.assertEqual(result["debug"]["structured_result"]["reason"], "价格来自 Java 候选商品。")
+
+    def test_inventory_check_uses_java_candidate_stock(self):
+        candidates = [
+            {
+                "spu_id": 9101,
+                "sku_id": 9201,
+                "spu_code": "JAVA_ONLY_TSHIRT",
+                "sku_code": "JAVA_ONLY_TSHIRT-BLACK-L",
+                "name": "候选款测试T恤",
+                "category": "T恤",
+                "color": "黑色",
+                "size": "L",
+                "sale_price": 123.0,
+                "stock_status": "in_stock",
+                "available_stock": 17,
+            }
+        ]
+
+        result = run_langgraph_agent(
+            "候选款测试T恤黑色L码有货吗？",
+            candidates=candidates,
+            user_context={"user_id": 1},
+            thread_id="test-inventory-uses-java-candidates",
+        )
+
+        self.assertEqual(result["debug"]["stop_reason"], "final_answer")
+        self.assertIn("候选款测试T恤", result["answer"])
+        self.assertIn("黑色", result["answer"])
+        self.assertIn("L", result["answer"])
+        self.assertIn("17", result["answer"])
+        self.assertEqual(result["debug"]["structured_result"]["reason"], "库存来自 Java 候选商品。")
+
     def test_policy_fallback_stops_before_answer_generation(self):
         registry = build_default_tool_registry(
             rag_runner=fake_rag_runner,

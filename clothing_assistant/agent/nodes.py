@@ -5,6 +5,8 @@ catalog price/stock are handled by structured nodes, while styling, care and
 product explanations still go through retrieval.
 """
 
+from typing import Any
+
 from clothing_assistant.agent.agent_executor import (
     apply_direct_answer_gate,
     apply_fallback_rag_tool,
@@ -33,6 +35,8 @@ from clothing_assistant.tools.product_catalog import (
     extract_requested_color,
     extract_requested_size,
     find_matching_product,
+    infer_lookup_type,
+    normalize_text,
     run_structured_lookup,
 )
 from clothing_assistant.tools.size_tool import normalize_measurement_query
@@ -106,6 +110,211 @@ def build_missing_info_answer(missing_fields):
     return "请补充关键信息后我再帮你查询。"
 
 
+def candidate_value(candidate: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = candidate.get(key)
+        if value not in (None, ""):
+            return value
+
+    return None
+
+
+def candidate_product_terms(candidate: dict[str, Any]) -> list[tuple[str, int]]:
+    """Return product identity terms from Java candidates.
+
+    Product matching deliberately prefers IDs, codes, and names over broad
+    category words so Python does not answer precise price/stock questions from
+    a vague "T恤" match when Java sent multiple SKU candidates.
+    """
+    terms = []
+
+    for key in ["sku_id", "spu_id", "sku_code", "spu_code"]:
+        value = candidate.get(key)
+        if value not in (None, ""):
+            terms.append((str(value), 5))
+
+    name = candidate.get("name")
+    if name:
+        terms.append((str(name), 5))
+
+    for key in ["category", "category_name"]:
+        value = candidate.get(key)
+        if value:
+            terms.append((str(value), 1))
+
+    return terms
+
+
+def candidate_product_score(user_query: str, candidate: dict[str, Any]) -> int:
+    query = normalize_text(user_query)
+    score = 0
+
+    for term, weight in candidate_product_terms(candidate):
+        normalized_term = normalize_text(term)
+        if normalized_term and normalized_term in query:
+            score += weight
+
+    return score
+
+
+def find_matching_candidate_products(user_query: str, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    scored_candidates = [
+        (candidate_product_score(user_query, candidate), index, candidate)
+        for index, candidate in enumerate(candidates or [])
+    ]
+    scored_candidates = [item for item in scored_candidates if item[0] > 0]
+
+    if not scored_candidates:
+        return {"candidates": [], "confidence": 0.0, "ambiguous": False}
+
+    scored_candidates.sort(key=lambda item: (-item[0], item[1]))
+    best_score = scored_candidates[0][0]
+    matched_candidates = [candidate for score, _, candidate in scored_candidates if score == best_score]
+
+    # 同一 SPU 的多个 SKU 是正常的候选集合，不应因为颜色/尺码不同就标记为歧义。
+    matched_spu_ids = {
+        str(candidate.get("spu_id"))
+        for candidate in matched_candidates
+        if candidate.get("spu_id") is not None
+    }
+    ambiguous = len(matched_spu_ids) > 1
+
+    return {
+        "candidates": [] if ambiguous else matched_candidates,
+        "confidence": min(1.0, best_score / 5),
+        "ambiguous": ambiguous,
+    }
+
+
+def extract_requested_candidate_color(user_query: str, candidates: list[dict[str, Any]]) -> str | None:
+    candidate_colors = sorted(
+        {
+            str(candidate.get("color"))
+            for candidate in candidates or []
+            if candidate.get("color")
+        },
+        key=len,
+        reverse=True,
+    )
+    query = normalize_text(user_query)
+
+    for color in candidate_colors:
+        if normalize_text(color) in query:
+            return color
+
+    return extract_requested_color(user_query)
+
+
+def candidate_matches_color_and_size(candidate: dict[str, Any], color: str, size: str) -> bool:
+    return (
+        normalize_text(candidate.get("color")) == normalize_text(color)
+        and str(candidate.get("size", "")).strip().upper() == str(size).strip().upper()
+    )
+
+
+def candidate_stock_count(candidate: dict[str, Any]) -> int:
+    stock_value = candidate.get("available_stock")
+
+    if stock_value in (None, ""):
+        stock_status = normalize_text(candidate.get("stock_status"))
+        return 1 if stock_status in {"in_stock", "low_stock", "available", "on_sale"} else 0
+
+    try:
+        return int(float(stock_value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def build_candidate_base_result(lookup_type, match_result):
+    matched_candidates = match_result.get("candidates", [])
+    candidate = matched_candidates[0] if matched_candidates else {}
+    missing_fields = []
+
+    if match_result.get("ambiguous"):
+        missing_fields.append("product_ambiguous")
+    elif not matched_candidates:
+        missing_fields.append("product")
+
+    return {
+        "lookup_type": lookup_type,
+        "matched_product_id": candidate.get("spu_id"),
+        "matched_product_name": candidate.get("name"),
+        "sku": candidate_value(candidate, "sku_code", "sku_id"),
+        "category": candidate_value(candidate, "category", "category_name"),
+        "material": candidate_value(candidate, "material", "materials"),
+        "confidence": match_result.get("confidence", 0.0),
+        "missing_fields": missing_fields,
+    }
+
+
+def run_candidate_structured_lookup(user_query, intent_result=None, candidates=None):
+    """Resolve exact commerce facts from Java-provided SKU candidates."""
+    lookup_type = infer_lookup_type(user_query, intent_result)
+    match_result = find_matching_candidate_products(user_query, candidates or [])
+    matched_candidates = match_result.get("candidates", [])
+    result = build_candidate_base_result(lookup_type, match_result)
+
+    if not lookup_type:
+        result["reason"] = "当前问题不属于结构化价格或库存查询。"
+        return result
+
+    if not matched_candidates:
+        result["reason"] = "缺少可由 Java 候选商品唯一确认的商品。"
+        return result
+
+    result["available_colors"] = sorted(
+        {
+            str(candidate.get("color"))
+            for candidate in matched_candidates
+            if candidate.get("color")
+        }
+    )
+
+    if lookup_type == "price":
+        candidate = matched_candidates[0]
+        result["price_cny"] = candidate.get("sale_price")
+        result["reason"] = "价格来自 Java 候选商品。"
+        return result
+
+    requested_color = extract_requested_candidate_color(user_query, matched_candidates)
+    requested_size = extract_requested_size(user_query)
+    result["color"] = requested_color
+    result["size"] = requested_size
+
+    if not requested_color:
+        result["missing_fields"].append("color")
+
+    if not requested_size:
+        result["missing_fields"].append("size")
+
+    if not requested_color or not requested_size:
+        result["stock_count"] = None
+        result["in_stock"] = None
+        result["reason"] = "库存查询缺少颜色或尺码。"
+        return result
+
+    matched_stock_candidate = next(
+        (
+            candidate
+            for candidate in matched_candidates
+            if candidate_matches_color_and_size(candidate, requested_color, requested_size)
+        ),
+        None,
+    )
+
+    if matched_stock_candidate is None:
+        result["stock_count"] = 0
+        result["in_stock"] = False
+        result["reason"] = "Java 候选商品没有这个颜色尺码组合。"
+        return result
+
+    stock_count = candidate_stock_count(matched_stock_candidate)
+    result["stock_count"] = stock_count
+    result["in_stock"] = stock_count > 0
+    result["reason"] = "库存来自 Java 候选商品。"
+    return result
+
+
 def missing_info_gate_node(state):
     """生产图的缺信息门。
 
@@ -116,13 +325,23 @@ def missing_info_gate_node(state):
     missing_fields = []
 
     if intent in {INTENT_INVENTORY_CHECK, INTENT_PRICE_CHECK}:
-        match_result = find_matching_product(state["user_query"])
-        product = match_result.get("product")
+        candidates = state.get("candidates", [])
 
-        if not product or match_result.get("ambiguous"):
+        if candidates:
+            match_result = find_matching_candidate_products(state["user_query"], candidates)
+            matched_candidates = match_result.get("candidates", [])
+            has_product = bool(matched_candidates) and not match_result.get("ambiguous")
+            has_color = bool(extract_requested_candidate_color(state["user_query"], matched_candidates))
+        else:
+            match_result = find_matching_product(state["user_query"])
+            product = match_result.get("product")
+            has_product = bool(product) and not match_result.get("ambiguous")
+            has_color = bool(extract_requested_color(state["user_query"], product)) if product else False
+
+        if not has_product:
             missing_fields.append("product")
         elif intent == INTENT_INVENTORY_CHECK:
-            if not extract_requested_color(state["user_query"], product):
+            if not has_color:
                 missing_fields.append("color")
             if not extract_requested_size(state["user_query"]):
                 missing_fields.append("size")
@@ -208,10 +427,20 @@ def summarize_result_for_trace(result):
 
 
 def run_catalog_lookup(state):
-    structured_result = run_structured_lookup(
-        state["user_query"],
-        intent_result=state["intent_result"],
-    )
+    candidates = state.get("candidates", [])
+    # Java candidates are the production fact source. The local JSON catalog is
+    # retained only for standalone Python demos and legacy tests without Java context.
+    if candidates:
+        structured_result = run_candidate_structured_lookup(
+            state["user_query"],
+            intent_result=state["intent_result"],
+            candidates=candidates,
+        )
+    else:
+        structured_result = run_structured_lookup(
+            state["user_query"],
+            intent_result=state["intent_result"],
+        )
     update = build_tool_update(
         state,
         "structured_lookup",

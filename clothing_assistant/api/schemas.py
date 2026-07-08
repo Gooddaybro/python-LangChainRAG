@@ -61,6 +61,24 @@ class ProductCandidate(BaseModel):
     main_image_url: str | None = Field(default=None, description="用于 Java 或前端展示的主图 URL。")
 
 
+class DemandIntent(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    version: str = Field(default="demand-intent-v1", description="Java 侧需求解析契约版本。")
+    source: str = Field(default="java-rule", description="需求解析来源，当前由 Java 规则解析器生成。")
+    rawQuery: str = Field(default="", description="用户原始自然语言需求。")
+    targetGender: str | None = Field(default=None, description="Java 解析出的目标性别硬过滤。")
+    category: str | None = Field(default=None, description="Java 商品库标准分类名。")
+    scene: list[str] = Field(default_factory=list, description="Java 解析出的场景偏好。")
+    style: list[str] = Field(default_factory=list, description="Java 解析出的风格偏好。")
+    budgetMax: int | float | None = Field(default=None, description="Java 解析出的预算上限。")
+    attributes: list[str] = Field(default_factory=list, description="Java 解析出的视觉或功能偏好。")
+    hardFilters: list[str] = Field(default_factory=list, description="Java 已经用于候选池过滤的字段。")
+    softPreferences: list[str] = Field(default_factory=list, description="Python 可用于排序解释的偏好字段。")
+    confidence: float | None = Field(default=None, description="Java 解析置信度。")
+    missingSlots: list[str] = Field(default_factory=list, description="还缺少、可用于追问的槽位。")
+
+
 class ProductRef(BaseModel):
     spu_id: int | str = Field(..., description="助手回复中所引用的 Java SPU ID。")
     sku_id: int | str = Field(..., description="助手回复中所引用的 Java SKU ID。")
@@ -82,6 +100,7 @@ class PythonChatRequest(BaseModel):
     chat_history: list[ChatHistoryItem] = Field(default_factory=list, description="来自 Java 的只读对话历史。")
     user_context: UserContext = Field(default_factory=UserContext, description="来自 Java 的只读用户画像上下文。")
     candidates: list[ProductCandidate] = Field(default_factory=list, description="Java 为此轮对话过滤出的 SKU 候选列表。")
+    demand_intent: DemandIntent | None = Field(default=None, description="Java 统一解析出的需求意图。")
     debug: bool = Field(default=False, description="是否包含内部 LangGraph 调试数据。")
 
     @field_validator("request_id", "session_id", "query")
