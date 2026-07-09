@@ -7,7 +7,12 @@ from clothing_assistant.agent.router import (
     INTENT_RECOMMENDATION,
     INTENT_SIZE_RECOMMENDATION,
 )
-from clothing_assistant.application.preference_parser import parse_preferences
+from clothing_assistant.application.preference_parser import (
+    append_unique,
+    build_empty_preferences,
+    merge_preferences,
+    parse_preferences,
+)
 
 
 RECOMMENDABLE_INTENTS = {
@@ -34,6 +39,7 @@ AVOID_TAG_TERMS = {
     "overly_formal": ["overly_formal", "过度正式", "商务正装", "正式商务"],
     "oversized": ["oversized", "过度宽松", "超宽松", "oversize"],
 }
+WARM_MATCH_TERMS = ["warm", "保暖", "厚款", "厚实", "羊毛", "羽绒", "加绒", "针织"]
 RAG_FACT_FORBIDDEN_TERMS = ["sku", "价格", "库存", "有货", "无货", "下架", "上架", "元"]
 
 
@@ -142,6 +148,51 @@ def candidate_terms(candidate: dict[str, Any]) -> set[str]:
 
 def candidate_text(candidate: dict[str, Any]) -> str:
     return " ".join(candidate_terms(candidate))
+
+
+def is_winter_warm_query(preferences: dict[str, Any]) -> bool:
+    return "warm" in (preferences.get("style_tags") or []) or "winter" in (preferences.get("season") or [])
+
+
+def candidate_has_winter_season(candidate: dict[str, Any]) -> bool:
+    season_values = iterable_candidate_values(candidate.get("season")) + iterable_candidate_values(candidate.get("seasons"))
+    return any(normalize_text(value) == "winter" for value in season_values)
+
+
+def candidate_has_warm_signal(candidate: dict[str, Any]) -> bool:
+    text = candidate_text(candidate)
+    return any(term in text for term in WARM_MATCH_TERMS)
+
+
+def preferences_from_demand_intent(demand_intent: dict[str, Any] | None) -> dict[str, Any]:
+    """Map Java's safe intent contract onto existing rerank preference keys."""
+    preferences = build_empty_preferences()
+    if not isinstance(demand_intent, dict):
+        return preferences
+
+    append_unique(preferences["scene"], demand_intent.get("scene") or [])
+    append_unique(preferences["style_tags"], demand_intent.get("style") or [])
+
+    attributes = {normalize_text(value) for value in demand_intent.get("attributes") or []}
+    if {"保暖", "厚款"} & attributes:
+        append_unique(preferences["style_tags"], ["warm"])
+        append_unique(preferences["season"], ["winter"])
+    if "平价" in attributes:
+        preferences["price_preference"] = "budget"
+    if "显瘦" in attributes:
+        append_unique(preferences["visual_goals"], ["slimmer"])
+    if "显高" in attributes:
+        append_unique(preferences["visual_goals"], ["taller"])
+
+    budget_max = as_number(demand_intent.get("budgetMax") or demand_intent.get("budget_max"))
+    if budget_max is not None:
+        preferences["budget_max"] = int(budget_max)
+
+    return preferences
+
+
+def resolve_preferences(user_query: str, demand_intent: dict[str, Any] | None = None) -> dict[str, Any]:
+    return merge_preferences(parse_preferences(user_query), preferences_from_demand_intent(demand_intent))
 
 
 def collect_preferred_colors(user_context: dict[str, Any], preferences: dict[str, Any]) -> set[str]:
@@ -366,6 +417,18 @@ def score_candidate(
 
     text = candidate_text(candidate)
 
+    if is_winter_warm_query(preferences):
+        winter_match = candidate_has_winter_season(candidate)
+        warm_match = candidate_has_warm_signal(candidate)
+        if not winter_match and not warm_match:
+            return -1.0, []
+        if winter_match:
+            score += 0.3
+            score_parts.append("匹配冬季需求")
+        if warm_match:
+            score += 0.35
+            score_parts.append("材质或厚度更适合保暖")
+
     if preferences.get("visual_goals"):
         for goal in preferences["visual_goals"]:
             terms = VISUAL_GOAL_TERMS.get(goal, [normalize_text(goal)])
@@ -404,6 +467,7 @@ def build_product_refs(
     user_context: dict[str, Any] | None,
     tool_results: dict[str, Any] | None,
     limit: int = 3,
+    demand_intent: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Select refs only from Java candidates; never invent product facts."""
     return build_product_rerank_result(
@@ -413,6 +477,7 @@ def build_product_refs(
         user_context,
         tool_results,
         limit=limit,
+        demand_intent=demand_intent,
     )["product_refs"]
 
 
@@ -423,12 +488,14 @@ def build_product_rerank_result(
     user_context: dict[str, Any] | None,
     tool_results: dict[str, Any] | None,
     limit: int = 3,
+    demand_intent: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rank Java-provided candidates and expose debug evidence for the AI layer."""
+    preferences = resolve_preferences(user_query, demand_intent)
     if not candidates:
         return {
             "product_refs": [],
-            "semantic_preferences": parse_preferences(user_query),
+            "semantic_preferences": preferences,
             "candidate_scores": [],
             "recommendation_source": "java_candidates_empty",
         }
@@ -437,14 +504,13 @@ def build_product_rerank_result(
     if intent not in RECOMMENDABLE_INTENTS:
         return {
             "product_refs": [],
-            "semantic_preferences": parse_preferences(user_query),
+            "semantic_preferences": preferences,
             "candidate_scores": [],
             "recommendation_source": "not_recommendable_intent",
         }
 
     user_context = user_context or {}
     tool_results = tool_results or {}
-    preferences = parse_preferences(user_query)
     recommended_size = get_recommended_size(tool_results)
     alternative_size = get_alternative_size(tool_results)
     query_terms = collect_query_terms(user_query, user_context, preferences)

@@ -540,6 +540,124 @@ class RecommendationServiceTests(unittest.TestCase):
         self.assertIn("版型或腰线更利于拉长比例", refs[0]["reason"])
         self.assertIn("颜色、线条或版型更贴合显瘦需求", refs[0]["reason"])
 
+    def test_java_demand_intent_affects_rerank_when_query_is_vague(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "黑色中高腰直筒裤",
+                "category": "裤子",
+                "color": "黑色",
+                "stock_status": "in_stock",
+                "style_tags": ["casual"],
+                "attribute_tags": ["腰线:中高腰", "下装版型:直筒"],
+                "sale_price": 199,
+            },
+            {
+                "spu_id": 1002,
+                "sku_id": 2002,
+                "name": "米色低腰商务裤",
+                "category": "裤子",
+                "color": "米色",
+                "stock_status": "in_stock",
+                "style_tags": ["formal"],
+                "attribute_tags": ["腰线:低腰", "风格:商务正装"],
+                "sale_price": 899,
+            },
+        ]
+
+        result = build_product_rerank_result(
+            candidates,
+            {"intent": "recommendation"},
+            "看看这个",
+            {},
+            {},
+            demand_intent={
+                "scene": ["campus", "daily"],
+                "style": ["casual"],
+                "attributes": ["平价", "显瘦", "显高"],
+            },
+        )
+
+        self.assertEqual(result["product_refs"][0]["spu_id"], 1001)
+        self.assertEqual(result["semantic_preferences"]["price_preference"], "budget")
+        self.assertIn("slimmer", result["semantic_preferences"]["visual_goals"])
+        self.assertIn("taller", result["semantic_preferences"]["visual_goals"])
+        self.assertIn("版型或腰线更利于拉长比例", result["product_refs"][0]["reason"])
+
+    def test_winter_warm_query_prefers_real_warm_candidates(self):
+        candidates = [
+            {
+                "spu_id": 1119,
+                "sku_id": 11192,
+                "name": "极简通勤Polo衫",
+                "category": "T恤",
+                "stock_status": "in_stock",
+                "season": ["autumn", "all_season"],
+                "style_tags": ["minimal", "casual"],
+                "attribute_tags": ["适用场景:通勤", "厚度:常规"],
+                "sale_price": 139,
+            },
+            {
+                "spu_id": 1110,
+                "sku_id": 11102,
+                "name": "约会A字半裙",
+                "category": "半裙",
+                "stock_status": "in_stock",
+                "season": ["autumn"],
+                "style_tags": ["date", "commute"],
+                "attribute_tags": ["适用场景:约会社交", "厚度:常规"],
+                "sale_price": 189,
+            },
+            {
+                "spu_id": 1116,
+                "sku_id": 11162,
+                "name": "羊毛保暖针织衫",
+                "category": "针织衫",
+                "material": "羊毛",
+                "stock_status": "in_stock",
+                "season": ["winter"],
+                "style_tags": ["minimal"],
+                "attribute_tags": ["厚度:厚款", "材质特征:保暖"],
+                "sale_price": 279,
+            },
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "秋冬保暖的?",
+            {},
+            {},
+        )
+
+        self.assertEqual([ref["spu_id"] for ref in refs], [1116])
+        self.assertIn("匹配冬季需求", refs[0]["reason"])
+        self.assertIn("材质或厚度更适合保暖", refs[0]["reason"])
+
+    def test_winter_warm_query_returns_no_refs_without_strong_match(self):
+        refs = build_product_refs(
+            [
+                {
+                    "spu_id": 1119,
+                    "sku_id": 11192,
+                    "name": "极简通勤Polo衫",
+                    "category": "T恤",
+                    "stock_status": "in_stock",
+                    "season": ["autumn", "all_season"],
+                    "style_tags": ["minimal"],
+                    "attribute_tags": ["厚度:常规"],
+                    "sale_price": 139,
+                }
+            ],
+            {"intent": "recommendation"},
+            "秋冬保暖的?",
+            {},
+            {},
+        )
+
+        self.assertEqual(refs, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -641,6 +641,7 @@ def build_candidate_recommendation_refs(state):
         state.get("user_query", ""),
         state.get("user_context", {}),
         state.get("tool_results", {}),
+        demand_intent=state.get("demand_intent", {}),
     )
 
 
