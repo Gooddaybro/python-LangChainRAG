@@ -16,6 +16,7 @@ from clothing_assistant.agent.agent_executor import (
     route_intent,
 )
 from clothing_assistant.application.answer_service import default_answer_generator
+from clothing_assistant.config_data import RAG_DISTANCE_THRESHOLD
 from clothing_assistant.agent.router import (
     INTENT_INVENTORY_CHECK,
     INTENT_POLICY_QA,
@@ -42,7 +43,6 @@ from clothing_assistant.tools.product_catalog import (
 from clothing_assistant.tools.size_tool import normalize_measurement_query
 
 
-RETRIEVAL_SCORE_THRESHOLD = 0.7
 RAG_ALLOWED_SOURCES = {
     "recommendation": {"颜色选择.txt", "洗涤养护.txt", "尺码推荐.txt"},
     "product": {"颜色选择.txt", "洗涤养护.txt", "尺码推荐.txt"},
@@ -521,12 +521,12 @@ def rag_retriever_node(state, registry=None, max_tool_calls=3):
     return build_tool_update(state, rag_tool.name, rag_tool.result_key, result)
 
 
-def chunk_is_relevant(chunk, query_type):
+def chunk_is_relevant(chunk, query_type, threshold=RAG_DISTANCE_THRESHOLD):
     score = float(chunk.get("score", 1.0))
     file_name = chunk.get("file_name")
     allowed_sources = RAG_ALLOWED_SOURCES.get(query_type)
 
-    if score > RETRIEVAL_SCORE_THRESHOLD:
+    if score > threshold:
         return False
 
     if allowed_sources and file_name not in allowed_sources:

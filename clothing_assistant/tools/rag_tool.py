@@ -1,7 +1,5 @@
+from clothing_assistant.config_data import RAG_TOP_K
 from clothing_assistant.infrastructure.vector_store import load_vector_store_meta, search_similar_chunks
-
-
-DEFAULT_AGENT_RAG_TOP_K = 3
 
 
 def build_rag_retrieval_query(user_query, query_type=None):
@@ -49,7 +47,7 @@ def safe_load_vector_store_meta():
         return {}
 
 
-def run_rag_tool(user_query, top_k=DEFAULT_AGENT_RAG_TOP_K, metadata_filter=None, query_type=None):
+def run_rag_tool(user_query, top_k=RAG_TOP_K, metadata_filter=None, query_type=None):
     """Agent RAG 工具入口：只负责检索知识库，不负责生成最终回答。"""
     retrieval_query = build_rag_retrieval_query(user_query, query_type=query_type)
     try:
