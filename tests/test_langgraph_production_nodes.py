@@ -1,7 +1,11 @@
 import unittest
 
 from clothing_assistant.agent.langgraph_executor import run_langgraph_agent
-from clothing_assistant.agent.nodes import chunk_is_relevant
+from clothing_assistant.agent.nodes import (
+    answer_validator_node,
+    chunk_is_relevant,
+    find_forbidden_rag_fact,
+)
 from clothing_assistant.agent.tool_registry import build_default_tool_registry
 
 
@@ -72,6 +76,10 @@ def fake_answer_generator(state):
     return f"draft for {state['intent_result']['intent']}", "draft prompt"
 
 
+def forbidden_commerce_fact_answer_generator(state):
+    return "这件衣服库存 8 件，售价 99 元，SKU ABC 已上架。", "forbidden commerce fact"
+
+
 def build_registry(rag_runner=fake_rag_runner):
     return build_default_tool_registry(
         rag_runner=rag_runner,
@@ -81,6 +89,82 @@ def build_registry(rag_runner=fake_rag_runner):
 
 
 class LangGraphProductionNodeTests(unittest.TestCase):
+    def pure_rag_state(self, draft_answer):
+        return {
+            "structured_result": {},
+            "draft_answer": draft_answer,
+            "tool_results": {"rag_tool": {"retrieved_chunks": [fake_rag_runner("test")["retrieved_chunks"][0]]}},
+            "accepted_chunks": [fake_rag_runner("test")["retrieved_chunks"][0]],
+            "candidates": [],
+            "intent_result": {"intent": "product_qa"},
+            "user_query": "这件衣服适合通勤吗？",
+            "user_context": {},
+            "demand_intent": {},
+        }
+
+    def test_pure_rag_commerce_facts_request_retry(self):
+        for draft_answer in ["这件衣服库存 8 件。", "售价 99 元。", "SKU ABC 已上架。"]:
+            with self.subTest(draft_answer=draft_answer):
+                validation = answer_validator_node(self.pure_rag_state(draft_answer))
+
+                self.assertFalse(validation["validation_result"]["grounded"])
+                self.assertTrue(validation["validation_result"]["retryable"])
+                self.assertEqual(
+                    validation["validation_result"]["reason"],
+                    "rag_answer_contains_forbidden_commerce_fact",
+                )
+                self.assertIn("删除价格、库存、SKU", validation["validation_feedback"])
+
+    def test_forbidden_pure_rag_answer_retries_then_falls_back(self):
+        result = run_langgraph_agent(
+            "日常通勤推荐什么颜色？",
+            tool_registry=build_registry(),
+            answer_generator=forbidden_commerce_fact_answer_generator,
+        )
+        debug = result["debug"]
+
+        self.assertEqual(debug["generation_attempts"], 2)
+        self.assertEqual(debug["stop_reason"], "answer_fallback")
+        self.assertEqual(
+            debug["validation_result"]["reason"],
+            "rag_answer_contains_forbidden_commerce_fact",
+        )
+        self.assertNotIn("库存 8 件", result["answer"])
+        self.assertNotIn("99 元", result["answer"])
+        self.assertNotIn("SKU", result["answer"])
+
+    def test_java_candidate_price_is_allowed_for_recommendation(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "基础通勤夹克",
+                "category": "外套",
+                "color": "黑色",
+                "stock_status": "in_stock",
+                "style_tags": ["commute", "casual", "basic"],
+                "attribute_tags": ["适用场景:通勤", "风格:基础款"],
+                "sale_price": 269,
+            }
+        ]
+
+        result = run_langgraph_agent(
+            "推荐一件300以内适合学生党通勤、不要太正式的外套",
+            candidates=candidates,
+            tool_registry=build_registry(),
+            answer_generator=forbidden_commerce_fact_answer_generator,
+        )
+
+        self.assertEqual(result["debug"]["stop_reason"], "final_answer")
+        self.assertTrue(result["debug"]["validation_result"]["grounded"])
+        self.assertIn("269 元", result["answer"])
+
+    def test_find_forbidden_rag_fact_returns_matched_commerce_text(self):
+        self.assertEqual(find_forbidden_rag_fact("库存 8 件"), "库存 8")
+        self.assertEqual(find_forbidden_rag_fact("售价 99 元"), "99 元")
+        self.assertEqual(find_forbidden_rag_fact("SKU ABC 已上架"), "SKU")
+        self.assertIsNone(find_forbidden_rag_fact("通勤适合低饱和基础色。"))
+
     def test_new_explanatory_domains_are_allowed_for_semantic_queries(self):
         material_chunk = {"file_name": "材质知识.txt", "score": 0.1}
         scene_chunk = {"file_name": "场景穿搭.txt", "score": 0.1}
@@ -113,6 +197,7 @@ class LangGraphProductionNodeTests(unittest.TestCase):
 
         self.assertEqual(debug["selected_tools"], ["structured_lookup"])
         self.assertEqual(debug["structured_result"]["stock_count"], 8)
+        self.assertEqual(debug["validation_result"]["reason"], "structured facts validated")
         self.assertEqual(debug["retrieved_chunks"], [])
         self.assertIn("8", result["answer"])
         self.assertNotIn("参考资料：", result["answer"])
@@ -127,6 +212,7 @@ class LangGraphProductionNodeTests(unittest.TestCase):
 
         self.assertEqual(debug["selected_tools"], ["structured_lookup"])
         self.assertEqual(debug["structured_result"]["price_cny"], 99)
+        self.assertEqual(debug["validation_result"]["reason"], "structured facts validated")
         self.assertIn("99", result["answer"])
         self.assertNotIn("参考资料：", result["answer"])
 

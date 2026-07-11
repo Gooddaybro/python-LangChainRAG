@@ -874,7 +874,7 @@ git commit -m "feat: cite accepted RAG sources"
 - Produces: `find_forbidden_rag_fact(answer) -> str | None`
 - Reuses: existing `generation_attempts`, `max_generation_attempts`, `validation_feedback`, and fallback path
 
-- [ ] **Step 1: Add failing validator tests**
+- [x] **Step 1: Add failing validator tests**
 
 Cover these exact behaviors:
 
@@ -886,7 +886,7 @@ Java candidate recommendation containing real sale_price -> remains valid
 Structured inventory/price answer -> remains valid
 ```
 
-- [ ] **Step 2: Implement minimal pattern detection**
+- [x] **Step 2: Implement minimal pattern detection**
 
 Use compiled regular expressions:
 
@@ -907,7 +907,7 @@ state.get("accepted_chunks") and not has_candidate_backed_recommendation(state)
 
 Do not apply to structured lookup or Java candidate-backed recommendation answers.
 
-- [ ] **Step 3: Return retry feedback through the existing graph loop**
+- [x] **Step 3: Return retry feedback through the existing graph loop**
 
 On detection return:
 
@@ -923,17 +923,17 @@ On detection return:
 }
 ```
 
-- [ ] **Step 4: Add answer quality cases**
+- [x] **Step 4: Add answer quality cases**
 
 Add deterministic fake-generator cases proving the second failed attempt routes to `answer_fallback` and the user-visible answer contains no strong commerce fact.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 ```bash
 .venv/bin/python -m unittest tests.test_langgraph_production_nodes tests.test_answer_quality_report tests.test_agent_pipeline -v
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add clothing_assistant/agent/nodes.py clothing_assistant/agent/answer_quality_cases.py tests/test_langgraph_production_nodes.py tests/test_answer_quality_report.py

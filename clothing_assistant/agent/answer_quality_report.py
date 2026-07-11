@@ -97,6 +97,9 @@ def fake_size_runner(query, chat_history=None):
 def fake_answer_generator(state):
     query = state["user_query"]
 
+    if "上班" in query:
+        return "这件衣服库存 8 件，售价 99 元，SKU ABC 已上架。", "answer quality forbidden fact"
+
     if "怎么洗" in query:
         return (
             "纯棉T恤建议冷水或温水轻柔洗，反面晾晒，避免高温烘干。",
@@ -396,4 +399,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
-

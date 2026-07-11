@@ -5,6 +5,7 @@ catalog price/stock are handled by structured nodes, while styling, care and
 product explanations still go through retrieval.
 """
 
+import re
 from typing import Any
 
 from clothing_assistant.agent.agent_executor import (
@@ -63,6 +64,31 @@ RAG_ALLOWED_SOURCES = {
     },
     "size": {"尺码推荐.txt", "颜色选择.txt", "版型知识.txt"},
 }
+
+# RAG 只提供解释性知识；这些模式属于必须交给 Java/MySQL 证明的强业务事实。
+RAG_FORBIDDEN_FACT_PATTERNS = [
+    re.compile(r"\bSKU\b", re.IGNORECASE),
+    re.compile(r"库存\s*\d+"),
+    re.compile(r"\d+(?:\.\d+)?\s*元"),
+    re.compile(r"(?:有货|无货|已上架|已下架)"),
+]
+
+
+def find_forbidden_rag_fact(answer):
+    """Return the first commerce fact that a pure-RAG answer must not assert.
+
+    Args:
+        answer: Draft answer produced from accepted explanatory RAG evidence.
+
+    Returns:
+        The matched commerce phrase, or ``None`` when no prohibited fact appears.
+    """
+    for pattern in RAG_FORBIDDEN_FACT_PATTERNS:
+        match = pattern.search(answer or "")
+        if match:
+            return match.group(0)
+
+    return None
 
 
 def route_intent_node(state):
@@ -840,8 +866,32 @@ def answer_validator_node(state):
             ),
         }
 
+    accepted_chunks = state.get("accepted_chunks", [])
+    candidate_backed_recommendation = has_candidate_backed_recommendation(state)
+
+    # 结构化查询已在前面返回；这里仅防止纯 RAG 草稿把解释性知识扩展成交易事实。
+    if accepted_chunks and not candidate_backed_recommendation:
+        forbidden_fact = find_forbidden_rag_fact(draft_answer)
+        if forbidden_fact:
+            validation_result = {
+                "grounded": False,
+                "retryable": True,
+                "reason": "rag_answer_contains_forbidden_commerce_fact",
+            }
+            return {
+                "validation_result": validation_result,
+                "validation_feedback": "删除价格、库存、SKU 和上下架结论，只使用已接受的解释性知识。",
+                "trace_events": make_trace(
+                    "answer_validated",
+                    grounded=False,
+                    retryable=True,
+                    reason="forbidden_rag_fact",
+                    forbidden_fact=forbidden_fact,
+                ),
+            }
+
     if state.get("tool_results", {}).get("rag_tool") and not state.get("accepted_chunks"):
-        if has_candidate_backed_recommendation(state):
+        if candidate_backed_recommendation:
             return {
                 "answer": state.get("draft_answer", ""),
                 "validation_result": validation_result,
@@ -862,7 +912,6 @@ def answer_validator_node(state):
             "trace_events": make_trace("answer_validated", grounded=False, source="rag_tool"),
         }
 
-    accepted_chunks = state.get("accepted_chunks", [])
     answer = state.get("draft_answer", "")
 
     # 只引用 grader 已接受的 chunk，不能把被拒绝或结构化查询结果伪装成 RAG 来源。
