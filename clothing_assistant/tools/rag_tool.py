@@ -35,6 +35,7 @@ def simplify_chunk(chunk):
     return {
         "chunk_id": chunk["chunk_id"],
         "file_name": chunk["file_name"],
+        "domain": chunk.get("domain", "general"),
         "content": chunk["content"],
         "score": chunk["score"],
     }

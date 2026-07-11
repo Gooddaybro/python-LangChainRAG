@@ -246,6 +246,8 @@ def build_vector_records_from_chunks(knowledge_chunks):
                 "chunk_id": chunk["chunk_id"],
                 "file_name": chunk["file_name"],
                 "file_path": chunk["file_path"],
+                # 将 domain 随向量持久化，避免检索后丢失知识的业务边界。
+                "domain": chunk.get("domain", "general"),
                 "content": chunk["content"],
                 "embedding": chunk_vector,
             }
@@ -291,6 +293,7 @@ def search_similar_chunks(query, top_k=DEFAULT_TOP_K, metadata_filter=None):
                 "chunk_id": record["chunk_id"],
                 "file_name": record["file_name"],
                 "file_path": record["file_path"],
+                "domain": record.get("domain", "general"),
                 "content": record["content"],
                 "score": score,
             }

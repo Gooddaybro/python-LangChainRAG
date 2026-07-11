@@ -4,11 +4,15 @@ from clothing_assistant.config_data import (
     CARE_KNOWLEDGE_FILE,
     COLOR_KNOWLEDGE_FILE,
     DATA_DIR,
+    FIT_KNOWLEDGE_FILE,
+    KNOWLEDGE_FILE_DOMAINS,
     KNOWLEDGE_FILES,
+    MATERIAL_KNOWLEDGE_FILE,
+    SCENE_KNOWLEDGE_FILE,
 )
 
 
-# 加载知识文件：把 data 目录中的 3 个 txt 文件读到内存里。
+# 加载配置中的知识文件；缺少任一文件时拒绝重建，避免产生半完整索引。
 def load_knowledge_files(data_dir=DATA_DIR, file_names=KNOWLEDGE_FILES):
     knowledge_docs = []
     missing_files = []
@@ -53,8 +57,16 @@ def split_lines_into_chunks(text):
     return chunks
 
 
-# 颜色文件按“编号主题段”切块，让一个 chunk 保留完整颜色场景上下文。
-def split_color_text_into_chunks(text):
+# 编号主题段必须整体保留，避免“适用场景”和“解释”被切成两个无上下文的向量。
+def split_numbered_sections_into_chunks(text):
+    """将编号标题及其说明保留为一个可检索的知识块。
+
+    Args:
+        text: 使用 ``1. 标题`` 作为主题边界的知识文件内容。
+
+    Returns:
+        每个编号主题及其后续说明组成的文本块列表。
+    """
     chunks = []
     current_block = []
     section_header_pattern = re.compile(r"^\d+\.\s+")
@@ -130,8 +142,13 @@ def split_care_text_into_chunks(text):
 
 # 切分单个知识文件：按文件类型选择策略，而不是所有文件一律按行切。
 def split_text_into_chunks(text, file_name):
-    if file_name == COLOR_KNOWLEDGE_FILE:
-        return split_color_text_into_chunks(text)
+    if file_name in {
+        COLOR_KNOWLEDGE_FILE,
+        SCENE_KNOWLEDGE_FILE,
+        MATERIAL_KNOWLEDGE_FILE,
+        FIT_KNOWLEDGE_FILE,
+    }:
+        return split_numbered_sections_into_chunks(text)
 
     if file_name == CARE_KNOWLEDGE_FILE:
         return split_care_text_into_chunks(text)
@@ -141,6 +158,17 @@ def split_text_into_chunks(text, file_name):
 
 # 构建整个知识库的文本块：给每个 chunk 加上来源信息，方便后续检索和溯源。
 def build_knowledge_chunks(knowledge_docs):
+    """构建带来源和业务域元数据的知识块。
+
+    domain 与原始文本一起进入向量索引，确保检索、评测和后续来源过滤
+    使用同一份业务语义，而不是根据文件名重复推断。
+
+    Args:
+        knowledge_docs: 已从本地知识文件读取的文档字典列表。
+
+    Returns:
+        供向量索引写入的知识块字典列表。
+    """
     knowledge_chunks = []
 
     for doc in knowledge_docs:
@@ -152,6 +180,8 @@ def build_knowledge_chunks(knowledge_docs):
                     "chunk_id": f"{doc['file_name']}-{index:03d}",
                     "file_name": doc["file_name"],
                     "file_path": doc["file_path"],
+                    # domain 让检索结果保留业务语义，后续可做来源过滤和评测分析。
+                    "domain": KNOWLEDGE_FILE_DOMAINS.get(doc["file_name"], "general"),
                     "content": chunk_content,
                 }
             )

@@ -44,9 +44,24 @@ from clothing_assistant.tools.size_tool import normalize_measurement_query
 
 
 RAG_ALLOWED_SOURCES = {
-    "recommendation": {"颜色选择.txt", "洗涤养护.txt", "尺码推荐.txt"},
-    "product": {"颜色选择.txt", "洗涤养护.txt", "尺码推荐.txt"},
-    "size": {"尺码推荐.txt", "颜色选择.txt"},
+    # 这些都是解释性知识；价格、库存和 SKU 仍只能由 Java/MySQL 的结构化查询回答。
+    "recommendation": {
+        "颜色选择.txt",
+        "洗涤养护.txt",
+        "尺码推荐.txt",
+        "场景穿搭.txt",
+        "材质知识.txt",
+        "版型知识.txt",
+    },
+    "product": {
+        "颜色选择.txt",
+        "洗涤养护.txt",
+        "尺码推荐.txt",
+        "场景穿搭.txt",
+        "材质知识.txt",
+        "版型知识.txt",
+    },
+    "size": {"尺码推荐.txt", "颜色选择.txt", "版型知识.txt"},
 }
 
 

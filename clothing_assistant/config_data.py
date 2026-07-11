@@ -31,6 +31,17 @@ RAG_DISTANCE_THRESHOLD = 0.7
 SIZE_KNOWLEDGE_FILE = "尺码推荐.txt"
 COLOR_KNOWLEDGE_FILE = "颜色选择.txt"
 CARE_KNOWLEDGE_FILE = "洗涤养护.txt"
+SCENE_KNOWLEDGE_FILE = "场景穿搭.txt"
+MATERIAL_KNOWLEDGE_FILE = "材质知识.txt"
+FIT_KNOWLEDGE_FILE = "版型知识.txt"
+KNOWLEDGE_FILE_DOMAINS = {
+    SIZE_KNOWLEDGE_FILE: "size",
+    COLOR_KNOWLEDGE_FILE: "color",
+    CARE_KNOWLEDGE_FILE: "care",
+    SCENE_KNOWLEDGE_FILE: "scene",
+    MATERIAL_KNOWLEDGE_FILE: "material",
+    FIT_KNOWLEDGE_FILE: "fit",
+}
 DEFAULT_TEST_QUERY = (
     "我身高168，体重65kg，想买一件日常穿的T恤，"
     "推荐什么尺码和颜色？洗的时候需要注意什么？"
@@ -40,4 +51,7 @@ KNOWLEDGE_FILES = [
     "尺码推荐.txt",
     "洗涤养护.txt",
     "颜色选择.txt",
+    "场景穿搭.txt",
+    "材质知识.txt",
+    "版型知识.txt",
 ]

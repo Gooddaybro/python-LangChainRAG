@@ -1,6 +1,7 @@
 import unittest
 
 from clothing_assistant.agent.langgraph_executor import run_langgraph_agent
+from clothing_assistant.agent.nodes import chunk_is_relevant
 from clothing_assistant.agent.tool_registry import build_default_tool_registry
 
 
@@ -80,6 +81,15 @@ def build_registry(rag_runner=fake_rag_runner):
 
 
 class LangGraphProductionNodeTests(unittest.TestCase):
+    def test_new_explanatory_domains_are_allowed_for_semantic_queries(self):
+        material_chunk = {"file_name": "材质知识.txt", "score": 0.1}
+        scene_chunk = {"file_name": "场景穿搭.txt", "score": 0.1}
+        fit_chunk = {"file_name": "版型知识.txt", "score": 0.1}
+
+        self.assertTrue(chunk_is_relevant(material_chunk, "product"))
+        self.assertTrue(chunk_is_relevant(scene_chunk, "recommendation"))
+        self.assertTrue(chunk_is_relevant(fit_chunk, "size"))
+
     def test_inventory_without_product_stops_at_missing_info_gate(self):
         result = run_langgraph_agent(
             "黑色有货吗？",

@@ -582,7 +582,7 @@ git commit -m "docs: record initial real RAG baseline"
 - Keeps existing chunk keys: `chunk_id`, `file_name`, `file_path`, `content`
 - Expands the upload allowlist through `KNOWLEDGE_FILES`
 
-- [ ] **Step 1: Add failing generic numbered-section splitter tests**
+- [x] **Step 1: Add failing generic numbered-section splitter tests**
 
 Create `tests/test_knowledge_base.py`:
 
@@ -609,13 +609,13 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertEqual(chunks[0]["domain"], "scene")
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 ```bash
 .venv/bin/python -m unittest tests.test_knowledge_base -v
 ```
 
-- [ ] **Step 3: Add file/domain configuration**
+- [x] **Step 3: Add file/domain configuration**
 
 Add constants and extend the file list:
 
@@ -634,7 +634,7 @@ KNOWLEDGE_FILE_DOMAINS = {
 }
 ```
 
-- [ ] **Step 4: Generalize the existing numbered-section splitter**
+- [x] **Step 4: Generalize the existing numbered-section splitter**
 
 Rename `split_color_text_into_chunks` to `split_numbered_sections_into_chunks`, use it for color, scene, material and fit documents, and add `domain` in `build_knowledge_chunks`:
 
@@ -644,7 +644,7 @@ Rename `split_color_text_into_chunks` to `split_numbered_sections_into_chunks`, 
 
 Preserve `domain` in vector records, search results and `simplify_chunk()`.
 
-- [ ] **Step 5: Add the initial curated knowledge content**
+- [x] **Step 5: Add the initial curated knowledge content**
 
 Write short numbered sections, one complete principle per section:
 
@@ -662,11 +662,11 @@ Write short numbered sections, one complete principle per section:
 
 `clothing_assistant/data/版型知识.txt` must cover straight, A-line, high-waist, relaxed, slim and oversized fits, explaining proportions and movement without making absolute body-shape promises.
 
-- [ ] **Step 6: Update allowed RAG sources and uploader copy**
+- [x] **Step 6: Update allowed RAG sources and uploader copy**
 
 Add the three files to `RAG_ALLOWED_SOURCES` for `product` and `recommendation`; add fit knowledge to `size`. Change uploader text from hard-coded `3` to `len(KNOWLEDGE_FILES)` everywhere.
 
-- [ ] **Step 7: Add new positive retrieval cases before rebuilding**
+- [x] **Step 7: Add new positive retrieval cases before rebuilding**
 
 Add at least these six cases:
 
@@ -679,20 +679,20 @@ Add at least these six cases:
 宽松版和过度 oversized 有什么区别 -> 版型知识.txt
 ```
 
-- [ ] **Step 8: Run deterministic tests, rebuild, and rerun real eval**
+- [x] **Step 8: Run deterministic tests, rebuild, and rerun real eval**
 
 ```bash
 .venv/bin/python -m unittest tests.test_knowledge_base tests.test_retrieval_eval_report tests.test_rag_tool -v
 .venv/bin/python -m clothing_assistant.infrastructure.vector_store
 .venv/bin/python -m clothing_assistant.agent.retrieval_eval_report \
   --top-k 3 --threshold 0.7 \
-  --output docs/evals/2026-07-10-rag-expanded-knowledge.md
+  --output docs/evals/2026-07-11-rag-expanded-knowledge.md
 ```
 
-- [ ] **Step 9: Commit knowledge and evidence**
+- [x] **Step 9: Commit knowledge and evidence**
 
 ```bash
-git add clothing_assistant/config_data.py clothing_assistant/infrastructure/knowledge_base.py clothing_assistant/infrastructure/vector_store.py clothing_assistant/tools/rag_tool.py clothing_assistant/agent/nodes.py clothing_assistant/ui/app_file_uploader.py clothing_assistant/data tests/test_knowledge_base.py clothing_assistant/agent/retrieval_eval_cases.py docs/evals/2026-07-10-rag-expanded-knowledge.md
+git add clothing_assistant/config_data.py clothing_assistant/infrastructure/knowledge_base.py clothing_assistant/infrastructure/vector_store.py clothing_assistant/tools/rag_tool.py clothing_assistant/agent/nodes.py clothing_assistant/ui/app_file_uploader.py clothing_assistant/data tests/test_knowledge_base.py tests/test_vector_store.py tests/test_rag_tool.py tests/test_langgraph_production_nodes.py clothing_assistant/agent/retrieval_eval_cases.py docs/evals/2026-07-11-rag-expanded-knowledge.md
 git commit -m "feat: expand grounded clothing knowledge"
 ```
 

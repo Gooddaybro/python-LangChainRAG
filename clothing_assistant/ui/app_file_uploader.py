@@ -1,4 +1,4 @@
-# 管理员上传 3 份服装知识文件，并把它们保存到 data/ 目录。
+# 管理员上传配置中的服装知识文件，并把它们保存到 data/ 目录。
 
 from collections import Counter
 import hashlib
@@ -24,7 +24,7 @@ from clothing_assistant.infrastructure.vector_store import rebuild_vector_store
 EXPECTED_FILE_NAMES = set(KNOWLEDGE_FILES)
 
 
-# 校验上传文件：只允许上传固定的 3 个 txt 文件，避免后续知识库读取失败。
+# 校验上传文件：只允许上传配置中的 txt 文件，避免后续知识库读取失败。
 def validate_uploaded_files(uploaded_files):
     uploaded_names = [uploaded_file.name for uploaded_file in uploaded_files]
     name_counter = Counter(uploaded_names)
@@ -139,12 +139,12 @@ st.set_page_config(
     layout="wide",
 )
 st.title(f"{PROJECT_DISPLAY_NAME} 知识库更新服务")
-st.write("管理员只能上传以下 3 个知识文件，用来更新服装知识库：")
+st.write(f"管理员只能上传以下 {len(KNOWLEDGE_FILES)} 个知识文件，用来更新服装知识库：")
 st.code("\n".join(KNOWLEDGE_FILES), language="text")
 
 # 修正 1：允许一次上传多个 txt 文件；修正 2：上传说明要和固定业务文件名保持一致。
 uploaded_files = st.file_uploader(
-    "请上传 3 个 TXT 知识文件",
+    f"请上传 {len(KNOWLEDGE_FILES)} 个 TXT 知识文件",
     type=["txt"],
     accept_multiple_files=True,
 )
@@ -163,7 +163,7 @@ if uploaded_files:
 # 点击按钮后再执行保存和验证，避免用户一选中文件就立刻覆盖本地知识库。
 if st.button("开始更新知识库"):
     if not uploaded_files:
-        st.error("请先上传 3 个固定的知识文件，再执行更新。")
+        st.error(f"请先上传 {len(KNOWLEDGE_FILES)} 个固定的知识文件，再执行更新。")
     else:
         validation_errors = validate_uploaded_files(uploaded_files)
 
@@ -181,7 +181,7 @@ if st.button("开始更新知识库"):
 
                 # 没有任何文件变化时，直接结束更新，避免重复写入和重复处理。
                 if not changed_files:
-                    st.info("3 个知识文件内容均未变化，已跳过保存和重建。")
+                    st.info(f"{len(KNOWLEDGE_FILES)} 个知识文件内容均未变化，已跳过保存和重建。")
 
                     if unchanged_files:
                         st.write(f"未变化文件：{', '.join(unchanged_files)}")

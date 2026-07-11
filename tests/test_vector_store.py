@@ -185,5 +185,24 @@ class JinaEmbeddingsTests(unittest.TestCase):
                 client_type()
 
 
+class VectorRecordMetadataTests(unittest.TestCase):
+    def test_vector_records_keep_knowledge_domain(self):
+        chunks = [
+            {
+                "chunk_id": "场景穿搭.txt-001",
+                "file_name": "场景穿搭.txt",
+                "file_path": "/tmp/scene.txt",
+                "domain": "scene",
+                "content": "1. 通勤\n选择简洁基础款。",
+            }
+        ]
+
+        with patch.object(vector_store, "get_embeddings") as get_embeddings:
+            get_embeddings.return_value.embed_documents.return_value = [[0.1, 0.2]]
+            records = vector_store.build_vector_records_from_chunks(chunks)
+
+        self.assertEqual(records[0]["domain"], "scene")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,10 +1,23 @@
 import unittest
 from unittest.mock import patch
 
-from clothing_assistant.tools.rag_tool import run_rag_tool
+from clothing_assistant.tools.rag_tool import run_rag_tool, simplify_chunk
 
 
 class RagToolTests(unittest.TestCase):
+    def test_simplify_chunk_keeps_knowledge_domain(self):
+        chunk = {
+            "chunk_id": "材质知识.txt-001",
+            "file_name": "材质知识.txt",
+            "content": "聚酯纤维耐皱。",
+            "score": 0.2,
+            "domain": "material",
+        }
+
+        simplified = simplify_chunk(chunk)
+
+        self.assertEqual(simplified["domain"], "material")
+
     def test_missing_vector_store_degrades_to_empty_sources(self):
         with patch(
             "clothing_assistant.tools.rag_tool.search_similar_chunks",
