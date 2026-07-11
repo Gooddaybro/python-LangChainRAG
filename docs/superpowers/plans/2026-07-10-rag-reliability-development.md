@@ -551,10 +551,10 @@ wrong_routing
 
 `generation_error` is not used here because this report stops before answer generation.
 
-- [ ] **Step 6: Commit only the report, never the vector files**
+- [x] **Step 6: Commit only the report, never the vector files**
 
 ```bash
-git add docs/evals/2026-07-10-rag-baseline.md
+git add docs/evals/2026-07-11-rag-baseline.md
 git commit -m "docs: record initial real RAG baseline"
 ```
 
