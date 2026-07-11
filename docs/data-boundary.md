@@ -26,7 +26,7 @@
 | 数据来源 | 当前文件或模块 | 负责内容 | 使用节点 |
 | --- | --- | --- | --- |
 | 商品目录 | `clothing_assistant/data/product_catalog.json` | 商品、SKU、价格、库存、颜色、尺码规则 id、政策 id | `structured_lookup` |
-| 商品知识文件 | `clothing_assistant/data/*.txt` | 颜色选择、洗涤养护、尺码知识说明 | `rag_retriever` |
+| 商品知识文件 | `clothing_assistant/data/*.txt` | 颜色、洗涤、尺码、场景、材质、版型的解释性知识 | `rag_retriever` |
 | 向量库 | `clothing_assistant/chroma_db/` | 文本 chunk 的向量索引 | `rag_tool` |
 | 请求历史 | API 请求里的 `chat_history` | 当前追问需要的显式历史 | `context_resolver` |
 | LangGraph checkpoint | 当前为 `InMemorySaver` | 按 `thread_id` 保存图执行状态 | LangGraph runtime |
@@ -128,9 +128,12 @@ retrieval_grader
 
 当前评分规则：
 
-- 分数高于阈值的 chunk 会被拒绝。
+- 分数高于距离阈值 `0.25` 的 chunk 会被拒绝。
 - 来源文件不符合 `query_type` 的 chunk 会被拒绝。
 - 没有 `accepted_chunks` 时，`retrieval_grader` 之后直接进入 `fallback_answer` 保守兜底。
+- 最终回答只追加 `accepted_chunks` 的文件名和 `chunk_id`，不让模型自行编造引用。
+- 纯 RAG 草稿不能断言价格、库存、SKU、上/下架状态；命中这些模式时重试一次，
+  仍失败则进入保守兜底。
 
 ## 5. Memory 边界
 

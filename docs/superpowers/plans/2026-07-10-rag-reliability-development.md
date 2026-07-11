@@ -1023,9 +1023,9 @@ git commit -m "fix: preserve working RAG index during rebuild"
 - Modify: `docs/data-boundary.md`
 - Modify: `README.md`
 - Modify: `docs/rag-learning-and-development-roadmap.md`
-- Generate: `docs/evals/2026-07-10-rag-final.md`
+- Generate: `docs/evals/2026-07-11-rag-final.md`
 
-- [ ] **Step 1: Run all deterministic verification**
+- [x] **Step 1: Run all deterministic verification**
 
 ```bash
 .venv/bin/python -m unittest discover -v
@@ -1034,13 +1034,13 @@ git commit -m "fix: preserve working RAG index during rebuild"
 
 Expected: all tests PASS with no external model call.
 
-- [ ] **Step 2: Rebuild and run the final real retrieval report**
+- [x] **Step 2: Rebuild and run the final real retrieval report**
 
 ```bash
 .venv/bin/python -m clothing_assistant.infrastructure.vector_store
 .venv/bin/python -m clothing_assistant.agent.retrieval_eval_report \
   --format markdown \
-  --output docs/evals/2026-07-10-rag-final.md
+  --output docs/evals/2026-07-11-rag-final.md
 ```
 
 Initial acceptance targets:
@@ -1053,7 +1053,7 @@ Candidate-pool-external product refs = 0
 Accepted RAG answers with deterministic sources = 100%
 ```
 
-- [ ] **Step 3: Start the API and inspect readiness**
+- [x] **Step 3: Start the API and inspect readiness**
 
 ```bash
 .venv/bin/python -m uvicorn clothing_assistant.api.app:app --port 8000
@@ -1063,9 +1063,9 @@ curl -s http://127.0.0.1:8000/health/rag
 
 Expected: liveness is `ok`; RAG readiness is `true` and exposes only safe metadata.
 
-- [ ] **Step 4: Manually verify four end-to-end questions**
+- [x] **Step 4: Manually verify four end-to-end questions**
 
-Use the Streamlit QA workbench with debug enabled:
+Use the Streamlit QA workbench or `/chat` with debug enabled:
 
 ```text
 纯棉T恤怎么洗？
@@ -1076,7 +1076,7 @@ Use the Streamlit QA workbench with debug enabled:
 
 Confirm respectively: grounded care answer with source, grounded color answer with source, conservative fallback, and structured inventory without RAG source.
 
-- [ ] **Step 5: Update documentation with actual final values**
+- [x] **Step 5: Update documentation with actual final values**
 
 Document:
 
@@ -1089,10 +1089,10 @@ Document:
 
 Mark roadmap checkboxes complete only when the matching evidence exists.
 
-- [ ] **Step 6: Final commit**
+- [x] **Step 6: Final commit**
 
 ```bash
-git add README.md docs/eval-plan.md docs/data-boundary.md docs/rag-learning-and-development-roadmap.md docs/evals/2026-07-10-rag-final.md
+git add README.md docs/eval-plan.md docs/data-boundary.md docs/rag-learning-and-development-roadmap.md docs/evals/2026-07-11-rag-final.md
 git commit -m "docs: complete RAG reliability rollout"
 ```
 

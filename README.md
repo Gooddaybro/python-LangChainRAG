@@ -154,6 +154,32 @@ python -m unittest tests.test_answer_quality_report -v
 
 上述索引重建和检索评测只需要 Jina key；只有调用聊天回答、或开启 `ENABLE_LLM_PREFERENCE_MAPPER=true` 时才需要 Moonshot/Kimi key。
 
+## RAG Reliability Status
+
+当前 RAG 使用 6 份解释性知识文件（颜色、洗涤、尺码、场景、材质、版型），
+共 51 个文本块。运行时参数由真实检索评测选择：`top_k=3`、距离阈值 `0.25`。
+
+最终检索报告：正向命中 `13/14`（92.86%），知识外问题错误接受 `0/2`。
+详细结果见 `docs/evals/2026-07-11-rag-final.md`，参数选择过程见
+`docs/evals/2026-07-11-rag-parameter-decision.md`。
+
+RAG 回答只会引用已接受的知识块，例如：
+
+```text
+参考资料：洗涤养护.txt（洗涤养护.txt-001）
+```
+
+价格、库存、SKU、上下架仍只来自 Java/MySQL 的结构化数据；纯 RAG 草稿出现
+这些强业务事实时会重试一次，仍不合格则返回保守兜底。
+
+检查索引状态：
+
+```bash
+curl -s http://127.0.0.1:8000/health/rag
+```
+
+返回只包含 `ready`、原因、chunk 数、版本和构建时间，不会暴露知识正文或向量。
+
 ## Local Agent Trace
 
 Agent debug trace is always returned in `result["debug"]["trace_events"]`.
