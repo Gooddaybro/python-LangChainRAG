@@ -703,13 +703,13 @@ git commit -m "feat: expand grounded clothing knowledge"
 **Why:** 知识覆盖稳定后才能调参。本任务不用“感觉更好”选参数，而用固定网格和确定的选择规则。
 
 **Files:**
-- Generate: `docs/evals/rag-sweep-k1-t040.md` through `docs/evals/rag-sweep-k5-t070.md`
+- Generate: `docs/evals/rag-sweep-k1-t020.md` through `docs/evals/rag-sweep-k5-t070.md`
 - Modify after selection: `clothing_assistant/config_data.py`
-- Generate: `docs/evals/2026-07-10-rag-parameter-decision.md`
+- Generate: `docs/evals/2026-07-11-rag-parameter-decision.md`
 
 **Selection rule:** 在 `false_accept_count == 0` 的组合中选择 `positive_hit_count` 最高者；平局时先选更小 `top_k`，再选更严格（数值更小）的距离阈值。
 
-- [ ] **Step 1: Run the fixed 3x3 grid**
+- [x] **Step 1: Run the fixed 3x3 grid**
 
 ```bash
 mkdir -p docs/evals
@@ -724,9 +724,25 @@ for k in 1 3 5; do
 done
 ```
 
-- [ ] **Step 2: Build the decision document**
+The original grid produced no configuration with `false_accept_count == 0`.
+Because the closest invalid result scored below `0.40`, run this follow-up
+grid before changing runtime values:
 
-Create `docs/evals/2026-07-10-rag-parameter-decision.md` with one row per configuration:
+```bash
+for k in 1 3 5; do
+  for threshold in 0.20 0.25 0.30; do
+    suffix=$(printf '%s' "$threshold" | tr -d '.')
+    .venv/bin/python -m clothing_assistant.agent.retrieval_eval_report \
+      --top-k "$k" \
+      --threshold "$threshold" \
+      --output "docs/evals/rag-sweep-k${k}-t${suffix}.md"
+  done
+done
+```
+
+- [x] **Step 2: Build the decision document**
+
+Create `docs/evals/2026-07-11-rag-parameter-decision.md` with one row per configuration:
 
 ```text
 top_k | threshold | positive_hit_count | hit_rate | false_accept_count | selected
@@ -734,11 +750,11 @@ top_k | threshold | positive_hit_count | hit_rate | false_accept_count | selecte
 
 Apply the exact selection rule above and explain failed alternatives in one sentence each.
 
-- [ ] **Step 3: Update only the two shared constants**
+- [x] **Step 3: Update only the two shared constants**
 
 Change `RAG_TOP_K` and `RAG_DISTANCE_THRESHOLD` to the selected values. Do not change chunking, query expansion or prompts in the same commit.
 
-- [ ] **Step 4: Verify the selected runtime defaults**
+- [x] **Step 4: Verify the selected runtime defaults**
 
 Update the expected constants in `tests/test_retrieval_eval_report.py`, then run:
 
@@ -747,7 +763,7 @@ Update the expected constants in `tests/test_retrieval_eval_report.py`, then run
 .venv/bin/python -m clothing_assistant.agent.retrieval_eval_report
 ```
 
-- [ ] **Step 5: Commit the single-variable decision**
+- [x] **Step 5: Commit the single-variable decision**
 
 ```bash
 git add clothing_assistant/config_data.py tests/test_retrieval_eval_report.py docs/evals

@@ -36,7 +36,7 @@ def fake_retriever(query, top_k=3, query_type=None):
 class RetrievalEvalReportTests(unittest.TestCase):
     def test_runtime_retrieval_defaults_are_explicit(self):
         self.assertEqual(getattr(config_data, "RAG_TOP_K", None), 3)
-        self.assertEqual(getattr(config_data, "RAG_DISTANCE_THRESHOLD", None), 0.7)
+        self.assertEqual(getattr(config_data, "RAG_DISTANCE_THRESHOLD", None), 0.25)
 
     def test_positive_case_passes_when_expected_chunk_is_accepted(self):
         case = {
