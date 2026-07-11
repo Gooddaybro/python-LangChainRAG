@@ -6,7 +6,7 @@
 
 **Architecture:** MySQL/Java 继续负责商品、SKU、价格、库存和上下架事实，Python 只在 Java candidates 内重排序。RAG 只索引颜色、材质、洗涤、版型、季节和场景等解释性知识；先用真实检索评测建基线，再根据失败 case 补知识和调参。
 
-**Tech Stack:** Python 3.11+、`unittest`、LangGraph、LangChain DashScope embeddings、FastAPI、本地 JSON 向量索引、Markdown/JSON 评测报告。
+**Tech Stack:** Python 3.11+、`unittest`、LangGraph、Jina embeddings、Kimi（Moonshot OpenAI 兼容接口）、FastAPI、本地 JSON 向量索引、Markdown/JSON 评测报告。
 
 ## Global Constraints
 
@@ -502,13 +502,13 @@ git commit -m "feat: expose RAG index readiness"
 - Consumes: configured embedding provider environment variable
 - Produces: committed baseline report without secrets or embedding vectors
 
-- [ ] **Step 1: Confirm the API key is present without printing it**
+- [x] **Step 1: Confirm the Jina API key is present without printing it**
 
 ```bash
-.venv/bin/python -c 'import os; assert os.getenv("DASHSCOPE_API_KEY"), "DASHSCOPE_API_KEY is not configured"'
+.venv/bin/python -c 'import clothing_assistant.config_data; import os; assert os.getenv("JINA_API_KEY"), "JINA_API_KEY is not configured"'
 ```
 
-- [ ] **Step 2: Rebuild from committed knowledge files**
+- [x] **Step 2: Rebuild from committed knowledge files**
 
 ```bash
 .venv/bin/python -m clothing_assistant.infrastructure.vector_store
@@ -516,7 +516,7 @@ git commit -m "feat: expose RAG index readiness"
 
 Expected: writes the local vector records and meta, then prints at least one retrieval result.
 
-- [ ] **Step 3: Confirm readiness**
+- [x] **Step 3: Confirm readiness**
 
 ```bash
 .venv/bin/python -c 'from clothing_assistant.infrastructure.vector_store import get_vector_store_status; print(get_vector_store_status())'
@@ -524,7 +524,7 @@ Expected: writes the local vector records and meta, then prints at least one ret
 
 Expected: `ready` is `True` and `chunk_count` is greater than zero.
 
-- [ ] **Step 4: Generate the immutable baseline**
+- [x] **Step 4: Generate the immutable baseline**
 
 ```bash
 mkdir -p docs/evals
@@ -532,12 +532,12 @@ mkdir -p docs/evals
   --top-k 3 \
   --threshold 0.7 \
   --format markdown \
-  --output docs/evals/2026-07-10-rag-baseline.md
+  --output docs/evals/2026-07-11-rag-baseline.md
 ```
 
 The report is allowed to contain failed cases. Do not change data or parameters until this file exists.
 
-- [ ] **Step 5: Classify each failure in the report**
+- [x] **Step 5: Classify each failure in the report**
 
 Append exactly one reason to every failed row:
 

@@ -4,6 +4,7 @@ __pycache__/
 .test_tmp/
 
 .venv/
+.env
 .idea/
 .vscode/
 

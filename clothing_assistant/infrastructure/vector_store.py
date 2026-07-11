@@ -1,15 +1,18 @@
 import json
 import math
+import os
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
-from langchain_community.embeddings import DashScopeEmbeddings
+import httpx
 
 from clothing_assistant.config_data import (
     DEFAULT_TEST_QUERY,
     DEFAULT_TOP_K,
     EMBEDDING_MODEL_NAME,
+    JINA_EMBEDDING_TIMEOUT_SECONDS,
+    JINA_EMBEDDING_URL,
     VECTOR_DB_DIR,
 )
 from clothing_assistant.infrastructure.knowledge_base import build_knowledge_chunks, load_knowledge_files
@@ -21,13 +24,62 @@ VECTOR_STORE_FILE = VECTOR_DB_DIR / "simple_vector_store.json"
 VECTOR_STORE_META_FILE = VECTOR_DB_DIR / "vector_store_meta.json"
 
 
-# 初始化 embedding 模型：知识文本和用户问题必须使用同一个向量模型，向量才有可比性。
+class JinaEmbeddings:
+    """Minimal Jina embedding adapter for document and query retrieval tasks."""
+
+    def __init__(self, api_key=None, model=EMBEDDING_MODEL_NAME):
+        self.api_key = api_key or os.getenv("JINA_API_KEY")
+        self.model = model
+
+        if not self.api_key:
+            raise RuntimeError("JINA_API_KEY is required to build or query the RAG vector store.")
+
+    def _embed(self, inputs, task):
+        response = httpx.post(
+            JINA_EMBEDDING_URL,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={
+                "model": self.model,
+                "input": inputs,
+                "embedding_type": "float",
+                "task": task,
+            },
+            timeout=JINA_EMBEDDING_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        data = response.json().get("data")
+
+        if not isinstance(data, list):
+            raise RuntimeError("Jina embedding response does not contain a data list.")
+
+        try:
+            ordered_data = sorted(data, key=lambda item: item["index"])
+            embeddings = [item["embedding"] for item in ordered_data]
+        except (KeyError, TypeError):
+            raise RuntimeError("Jina embedding response has an invalid item shape.") from None
+
+        if len(embeddings) != len(inputs):
+            raise RuntimeError("Jina embedding response count does not match the input count.")
+
+        return embeddings
+
+    def embed_documents(self, texts):
+        inputs = list(texts)
+        if not inputs:
+            return []
+        return self._embed(inputs, "retrieval.passage")
+
+    def embed_query(self, text):
+        return self._embed([text], "retrieval.query")[0]
+
+
+# 初始化 embedding 客户端：知识文本和用户问题必须使用同一模型，向量才有可比性。
 def get_embeddings():
     global _EMBEDDINGS_CACHE
 
-    # Streamlit 点击按钮会重跑页面脚本；缓存模型对象可以避免重复初始化。
+    # Streamlit 点击按钮会重跑页面脚本；缓存客户端对象避免重复初始化。
     if _EMBEDDINGS_CACHE is None:
-        _EMBEDDINGS_CACHE = DashScopeEmbeddings(model=EMBEDDING_MODEL_NAME)
+        _EMBEDDINGS_CACHE = JinaEmbeddings()
 
     return _EMBEDDINGS_CACHE
 
@@ -88,7 +140,8 @@ def build_vector_store_meta(knowledge_chunks):
         "version": built_at,
         "source_files": build_source_file_meta(knowledge_chunks),
         "chunk_count": len(knowledge_chunks),
-        "embedding_provider": "dashscope",
+        "embedding_provider": "jina",
+        "embedding_model": EMBEDDING_MODEL_NAME,
         "built_at": built_at,
     }
 

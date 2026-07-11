@@ -9,10 +9,22 @@
 
 ```powershell
 pip install -r requirements.txt
-$env:DASHSCOPE_API_KEY="your-dashscope-api-key"
+Copy-Item .env.example .env
 ```
 
-`DASHSCOPE_API_KEY` 用于知识库 embedding 和最终回答生成。如需启用“学生党、显高显瘦、平价百搭”等模糊需求的大模型结构化映射，再额外设置：
+在项目根目录的 `.env` 中填写：
+
+```dotenv
+# 建立或查询 RAG 向量索引必填
+JINA_API_KEY=your-jina-api-key
+
+# 生成最终回答时必填；只重建索引和跑检索评测时可以留空
+MOONSHOT_API_KEY=your-moonshot-api-key
+```
+
+`.env` 已被 Git 忽略，不能提交或发送。Jina 只负责将知识块和用户问题转换为向量；Kimi 只负责基于已检索证据生成最终回答。
+
+如需启用“学生党、显高显瘦、平价百搭”等模糊需求的大模型结构化映射，再额外设置：
 
 ```powershell
 $env:ENABLE_LLM_PREFERENCE_MAPPER="true"
@@ -40,7 +52,7 @@ streamlit run clothing_assistant/ui/app_qa.py
 .venv/bin/python -m clothing_assistant.infrastructure.vector_store
 ```
 
-该命令需要先配置 `DASHSCOPE_API_KEY`。生成的 `clothing_assistant/chroma_db/` 是本地派生数据，不提交到 Git。
+该命令需要先配置 `JINA_API_KEY`。生成的 `clothing_assistant/chroma_db/` 是本地 JSON 向量索引（派生数据），不提交到 Git。
 
 ## FastAPI Backend
 
@@ -139,6 +151,8 @@ python -m unittest tests.test_answer_quality_report -v
   --threshold 0.7 \
   --output docs/evals/rag-retrieval.md
 ```
+
+上述索引重建和检索评测只需要 Jina key；只有调用聊天回答、或开启 `ENABLE_LLM_PREFERENCE_MAPPER=true` 时才需要 Moonshot/Kimi key。
 
 ## Local Agent Trace
 

@@ -1,9 +1,10 @@
 import json
+import os
 import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from clothing_assistant.infrastructure import vector_store
 from clothing_assistant.infrastructure.knowledge_base import build_knowledge_chunks
@@ -137,6 +138,51 @@ class VectorStoreStatusTests(unittest.TestCase):
                 "built_at": "2026-07-10T00:00:00+00:00",
             },
         )
+
+
+class JinaEmbeddingsTests(unittest.TestCase):
+    def get_embeddings_client(self, api_key="test-jina-key"):
+        client_type = getattr(vector_store, "JinaEmbeddings", None)
+        self.assertIsNotNone(client_type)
+        return client_type(api_key=api_key)
+
+    def test_document_embeddings_use_passage_task_and_response_indexes(self):
+        client = self.get_embeddings_client()
+        response = Mock()
+        response.json.return_value = {
+            "data": [
+                {"index": 1, "embedding": [0.2, 0.3]},
+                {"index": 0, "embedding": [0.0, 0.1]},
+            ]
+        }
+        with patch("clothing_assistant.infrastructure.vector_store.httpx.post", create=True) as post:
+            post.return_value = response
+
+            embeddings = client.embed_documents(["文档 A", "文档 B"])
+
+        self.assertEqual(embeddings, [[0.0, 0.1], [0.2, 0.3]])
+        post.assert_called_once()
+        self.assertEqual(post.call_args.kwargs["json"]["task"], "retrieval.passage")
+        self.assertEqual(post.call_args.kwargs["json"]["input"], ["文档 A", "文档 B"])
+
+    def test_query_embedding_uses_query_task(self):
+        client = self.get_embeddings_client()
+        response = Mock()
+        response.json.return_value = {"data": [{"index": 0, "embedding": [0.1, 0.2]}]}
+        with patch("clothing_assistant.infrastructure.vector_store.httpx.post", create=True) as post:
+            post.return_value = response
+
+            embedding = client.embed_query("通勤适合什么颜色？")
+
+        self.assertEqual(embedding, [0.1, 0.2])
+        self.assertEqual(post.call_args.kwargs["json"]["task"], "retrieval.query")
+
+    def test_embedding_client_requires_jina_api_key(self):
+        with patch.dict(os.environ, {}, clear=True):
+            client_type = getattr(vector_store, "JinaEmbeddings", None)
+            self.assertIsNotNone(client_type)
+            with self.assertRaisesRegex(RuntimeError, "JINA_API_KEY"):
+                client_type()
 
 
 if __name__ == "__main__":

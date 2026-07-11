@@ -1,10 +1,15 @@
 from pathlib import Path
 import os
 
+from dotenv import load_dotenv
+
 # 应该只放配置，不放业务逻辑。
 # 定义项目里的“路径配置”和“默认要加载哪些知识文件”。
 
 BASE_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = BASE_DIR.parent
+load_dotenv(PROJECT_DIR / ".env")
+
 PROJECT_DISPLAY_NAME = "AI Clothing Shopping Assistant System"
 PROJECT_API_TITLE = f"{PROJECT_DISPLAY_NAME} API"
 DATA_DIR = BASE_DIR / "data"
@@ -13,8 +18,11 @@ CHAT_HISTORY_DIR = BASE_DIR / "chat_history"
 VECTOR_DB_DIR = BASE_DIR / "chroma_db"
 FILE_HASH_RECORD_PATH = BASE_DIR / "knowledge_file_hashes.json"
 VECTOR_COLLECTION_NAME = "clothing_knowledge_base"
-EMBEDDING_MODEL_NAME = "text-embedding-v1"
-CHAT_MODEL_NAME = "qwen-turbo"
+EMBEDDING_MODEL_NAME = os.getenv("JINA_EMBEDDING_MODEL", "jina-embeddings-v4")
+JINA_EMBEDDING_URL = "https://api.jina.ai/v1/embeddings"
+JINA_EMBEDDING_TIMEOUT_SECONDS = 30
+CHAT_MODEL_NAME = os.getenv("KIMI_CHAT_MODEL", "kimi-k2.5")
+KIMI_BASE_URL = "https://api.moonshot.cn/v1"
 CHAT_TEMPERATURE = 0.1
 ENABLE_LLM_PREFERENCE_MAPPER = os.getenv("ENABLE_LLM_PREFERENCE_MAPPER", "false").lower() == "true"
 DEFAULT_TOP_K = 4
