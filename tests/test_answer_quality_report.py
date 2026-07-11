@@ -11,9 +11,31 @@ from clothing_assistant.agent.answer_quality_report import (
     score_answer,
     write_report,
 )
+from clothing_assistant.application.answer_service import append_rag_sources, format_rag_sources
 
 
 class AnswerQualityReportTests(unittest.TestCase):
+    def test_format_rag_sources_keeps_each_source_once(self):
+        chunks = [
+            {"file_name": "颜色选择.txt", "chunk_id": "颜色选择.txt-001"},
+            {"file_name": "颜色选择.txt", "chunk_id": "颜色选择.txt-001"},
+            {"file_name": "场景穿搭.txt", "chunk_id": "场景穿搭.txt-002"},
+        ]
+
+        sources = format_rag_sources(chunks)
+
+        self.assertEqual(
+            sources,
+            "颜色选择.txt（颜色选择.txt-001）、场景穿搭.txt（场景穿搭.txt-002）",
+        )
+
+    def test_append_rag_sources_keeps_answer_unchanged_without_accepted_chunks(self):
+        answer = "当前知识库没有检索到足够可靠的资料。"
+
+        cited_answer = append_rag_sources(answer, [])
+
+        self.assertEqual(cited_answer, answer)
+
     def test_score_answer_passes_when_text_and_debug_match(self):
         case = {
             "must_include": ["基础款纯棉T恤", "99"],
@@ -125,4 +147,3 @@ class AnswerQualityReportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

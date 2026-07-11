@@ -8,6 +8,53 @@ from clothing_assistant.application.recommendation_service import build_product_
 from clothing_assistant.infrastructure.llm_client import get_chat_model
 
 
+def format_rag_sources(chunks):
+    """Build deterministic user-facing citations from accepted RAG chunks.
+
+    The application, rather than the chat model, creates these citations so a
+    generated answer cannot claim a file or chunk that retrieval did not pass.
+
+    Args:
+        chunks: Accepted retrieval chunks containing ``file_name`` and ``chunk_id``.
+
+    Returns:
+        A deduplicated citation string, or an empty string when no valid source exists.
+    """
+    seen = set()
+    sources = []
+
+    for chunk in chunks or []:
+        file_name = chunk.get("file_name")
+        chunk_id = chunk.get("chunk_id")
+        key = (file_name, chunk_id)
+
+        if not file_name or not chunk_id or key in seen:
+            continue
+
+        seen.add(key)
+        sources.append(f"{file_name}（{chunk_id}）")
+
+    return "、".join(sources)
+
+
+def append_rag_sources(answer, chunks):
+    """Append citations only when deterministic accepted-RAG sources exist.
+
+    Args:
+        answer: User-facing answer that passed the answer validator.
+        chunks: Accepted RAG chunks used as the only valid citation inputs.
+
+    Returns:
+        The original answer when no source is available; otherwise the answer
+        followed by a deterministic source footer.
+    """
+    sources = format_rag_sources(chunks)
+    if not sources:
+        return answer
+
+    return f"{answer}\n\n参考资料：{sources}"
+
+
 def format_chunks(chunks):
     """把 RAG chunk 转成最终 prompt 可读的中文资料块。"""
     if not chunks:

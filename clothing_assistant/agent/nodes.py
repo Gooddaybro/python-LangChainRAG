@@ -15,7 +15,7 @@ from clothing_assistant.agent.agent_executor import (
     resolve_memory,
     route_intent,
 )
-from clothing_assistant.application.answer_service import default_answer_generator
+from clothing_assistant.application.answer_service import append_rag_sources, default_answer_generator
 from clothing_assistant.config_data import RAG_DISTANCE_THRESHOLD
 from clothing_assistant.agent.router import (
     INTENT_INVENTORY_CHECK,
@@ -862,8 +862,15 @@ def answer_validator_node(state):
             "trace_events": make_trace("answer_validated", grounded=False, source="rag_tool"),
         }
 
+    accepted_chunks = state.get("accepted_chunks", [])
+    answer = state.get("draft_answer", "")
+
+    # 只引用 grader 已接受的 chunk，不能把被拒绝或结构化查询结果伪装成 RAG 来源。
+    if state.get("tool_results", {}).get("rag_tool") and accepted_chunks:
+        answer = append_rag_sources(answer, accepted_chunks)
+
     return {
-        "answer": state.get("draft_answer", ""),
+        "answer": answer,
         "validation_result": validation_result,
         "stop_reason": "final_answer",
         "trace_events": make_trace("answer_validated", grounded=True, source="draft_answer"),
@@ -885,6 +892,13 @@ def trace_logger_node(state):
             "price_cny": structured_result.get("price_cny"),
         },
         "accepted_chunk_count": len(state.get("accepted_chunks", [])),
+        "rag_sources": [
+            {
+                "file_name": chunk.get("file_name"),
+                "chunk_id": chunk.get("chunk_id"),
+            }
+            for chunk in state.get("accepted_chunks", [])
+        ],
         "validation": state.get("validation_result", {}),
     }
 

@@ -115,6 +115,7 @@ class LangGraphProductionNodeTests(unittest.TestCase):
         self.assertEqual(debug["structured_result"]["stock_count"], 8)
         self.assertEqual(debug["retrieved_chunks"], [])
         self.assertIn("8", result["answer"])
+        self.assertNotIn("参考资料：", result["answer"])
 
     def test_price_uses_catalog_value(self):
         result = run_langgraph_agent(
@@ -127,6 +128,7 @@ class LangGraphProductionNodeTests(unittest.TestCase):
         self.assertEqual(debug["selected_tools"], ["structured_lookup"])
         self.assertEqual(debug["structured_result"]["price_cny"], 99)
         self.assertIn("99", result["answer"])
+        self.assertNotIn("参考资料：", result["answer"])
 
     def test_semantic_question_uses_rag_and_rule_grader(self):
         result = run_langgraph_agent(
@@ -140,6 +142,11 @@ class LangGraphProductionNodeTests(unittest.TestCase):
         self.assertEqual(len(debug["accepted_chunks"]), 1)
         self.assertEqual(debug["retrieval_route"]["status"], "good")
         self.assertEqual(debug["stop_reason"], "final_answer")
+        self.assertIn("参考资料：颜色选择.txt（production-chunk-001）", result["answer"])
+        self.assertEqual(
+            debug["evidence_summary"]["rag_sources"],
+            [{"file_name": "颜色选择.txt", "chunk_id": "production-chunk-001"}],
+        )
 
     def test_weak_retrieval_is_rejected_before_final_answer(self):
         result = run_langgraph_agent(
@@ -158,6 +165,7 @@ class LangGraphProductionNodeTests(unittest.TestCase):
         self.assertIn("retrieval_grader", trace_steps)
         self.assertIn("fallback_answer", trace_steps)
         self.assertNotIn("answer_generated", trace_steps)
+        self.assertNotIn("参考资料：", result["answer"])
 
     def test_empty_retrieval_routes_to_fallback_answer(self):
         result = run_langgraph_agent(
@@ -175,6 +183,7 @@ class LangGraphProductionNodeTests(unittest.TestCase):
         self.assertEqual(debug["stop_reason"], "answer_fallback")
         self.assertIn("fallback_answer", trace_steps)
         self.assertNotIn("answer_generated", trace_steps)
+        self.assertNotIn("参考资料：", result["answer"])
 
 
 if __name__ == "__main__":

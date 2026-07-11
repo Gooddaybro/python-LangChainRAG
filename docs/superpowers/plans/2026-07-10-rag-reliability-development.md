@@ -786,7 +786,7 @@ git commit -m "perf: calibrate RAG retrieval defaults"
 - Produces: `format_rag_sources(chunks) -> str`
 - Produces: `append_rag_sources(answer, chunks) -> str`
 
-- [ ] **Step 1: Write failing source formatting tests**
+- [x] **Step 1: Write failing source formatting tests**
 
 Add tests that require:
 
@@ -801,13 +801,13 @@ Requirements:
 - Structured inventory/price answers add no RAG footer.
 - Weak/empty retrieval fallback adds no fake source.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 ```bash
 .venv/bin/python -m unittest tests.test_langgraph_production_nodes tests.test_answer_quality_report -v
 ```
 
-- [ ] **Step 3: Implement deterministic source formatting**
+- [x] **Step 3: Implement deterministic source formatting**
 
 Add to `answer_service.py`:
 
@@ -835,7 +835,7 @@ def append_rag_sources(answer, chunks):
 
 In `answer_validator_node`, append sources only for accepted RAG answers immediately before returning `stop_reason="final_answer"`.
 
-- [ ] **Step 4: Include source IDs in evidence summary**
+- [x] **Step 4: Include source IDs in evidence summary**
 
 Add:
 
@@ -846,13 +846,13 @@ Add:
 ],
 ```
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 ```bash
 .venv/bin/python -m unittest tests.test_langgraph_production_nodes tests.test_answer_quality_report tests.test_agent_pipeline -v
 ```
 
-- [ ] **Step 6: Commit source traceability**
+- [x] **Step 6: Commit source traceability**
 
 ```bash
 git add clothing_assistant/application/answer_service.py clothing_assistant/agent/nodes.py tests/test_langgraph_production_nodes.py tests/test_answer_quality_report.py
