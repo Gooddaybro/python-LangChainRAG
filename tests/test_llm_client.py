@@ -7,6 +7,9 @@ from clothing_assistant.infrastructure import llm_client
 
 
 class KimiChatClientTests(unittest.TestCase):
+    def test_kimi_k25_uses_the_provider_required_temperature(self):
+        self.assertEqual(CHAT_TEMPERATURE, 1)
+
     def test_kimi_client_uses_moonshot_openai_compatibility(self):
         chat_client_type = getattr(llm_client, "ChatOpenAI", None)
         self.assertIsNotNone(chat_client_type)

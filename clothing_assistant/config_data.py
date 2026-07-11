@@ -23,7 +23,8 @@ JINA_EMBEDDING_URL = "https://api.jina.ai/v1/embeddings"
 JINA_EMBEDDING_TIMEOUT_SECONDS = 30
 CHAT_MODEL_NAME = os.getenv("KIMI_CHAT_MODEL", "kimi-k2.5")
 KIMI_BASE_URL = "https://api.moonshot.cn/v1"
-CHAT_TEMPERATURE = 0.1
+# Kimi K2.5 当前仅接受 temperature=1；较低随机度由证据校验而不是该参数保证。
+CHAT_TEMPERATURE = 1
 ENABLE_LLM_PREFERENCE_MAPPER = os.getenv("ENABLE_LLM_PREFERENCE_MAPPER", "false").lower() == "true"
 DEFAULT_TOP_K = 4
 RAG_TOP_K = 3

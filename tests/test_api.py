@@ -79,6 +79,7 @@ class ApiTests(unittest.TestCase):
             session_id="session-api-1",
             user_context={},
             candidates=[],
+            demand_intent=None,
         )
 
     def test_chat_passes_thread_id_to_langgraph_executor(self):
@@ -116,6 +117,7 @@ class ApiTests(unittest.TestCase):
             session_id="session-api-2",
             user_context={},
             candidates=[],
+            demand_intent=None,
         )
 
     def test_chat_hides_debug_when_disabled(self):
