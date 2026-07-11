@@ -375,7 +375,7 @@ git commit -m "test: add real RAG retrieval evaluation"
 - Produces API: `GET /health/rag`
 - Keeps existing API: `GET /health -> {"status": "ok"}` unchanged
 
-- [ ] **Step 1: Write failing vector readiness tests**
+- [x] **Step 1: Write failing vector readiness tests**
 
 Create `tests/test_vector_store.py` with temporary paths and patch module constants. Cover these exact states:
 
@@ -400,7 +400,7 @@ The ready assertion must expect:
 }
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 ```bash
 .venv/bin/python -m unittest tests.test_vector_store -v
@@ -408,7 +408,7 @@ The ready assertion must expect:
 
 Expected: FAIL because `get_vector_store_status` does not exist.
 
-- [ ] **Step 3: Implement the minimum readiness function**
+- [x] **Step 3: Implement the minimum readiness function**
 
 Add `get_vector_store_status()` to `infrastructure/vector_store.py`. It must:
 
@@ -431,7 +431,7 @@ source_files_changed
 ready
 ```
 
-- [ ] **Step 4: Add a non-breaking RAG health endpoint test**
+- [x] **Step 4: Add a non-breaking RAG health endpoint test**
 
 Append to `tests/test_api.py`:
 
@@ -451,7 +451,7 @@ def test_rag_health_returns_vector_store_status(self):
     self.assertEqual(response.json(), status)
 ```
 
-- [ ] **Step 5: Implement `GET /health/rag`**
+- [x] **Step 5: Implement `GET /health/rag`**
 
 Import `get_vector_store_status` and add:
 
@@ -463,7 +463,7 @@ def rag_health():
 
 Do not change the existing `/health` response because Java/container liveness may depend on it.
 
-- [ ] **Step 6: Document the existing rebuild command and real eval command**
+- [x] **Step 6: Document the existing rebuild command and real eval command**
 
 Add to `README.md`:
 
@@ -474,14 +474,14 @@ Add to `README.md`:
 
 Explain that the first command requires the embedding provider environment variable and that `chroma_db/` is local generated state.
 
-- [ ] **Step 7: Verify**
+- [x] **Step 7: Verify**
 
 ```bash
 .venv/bin/python -m unittest tests.test_vector_store tests.test_api -v
 .venv/bin/python -m compileall -q clothing_assistant tests
 ```
 
-- [ ] **Step 8: Commit readiness support**
+- [x] **Step 8: Commit readiness support**
 
 ```bash
 git add clothing_assistant/infrastructure/vector_store.py clothing_assistant/api/app.py tests/test_vector_store.py tests/test_api.py README.md
