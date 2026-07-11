@@ -101,6 +101,72 @@ def load_vector_store_meta():
         return json.load(file)
 
 
+def _build_vector_store_status(ready, reason, meta=None):
+    meta = meta or {}
+    return {
+        "ready": ready,
+        "reason": reason,
+        "chunk_count": meta.get("chunk_count", 0),
+        "version": meta.get("version"),
+        "built_at": meta.get("built_at"),
+    }
+
+
+def _source_hashes(source_files):
+    return {
+        item.get("file_name"): item.get("sha256")
+        for item in source_files
+        if item.get("file_name") and item.get("sha256")
+    }
+
+
+def get_vector_store_status():
+    """Return safe readiness metadata without exposing vectors or knowledge text."""
+    if not VECTOR_STORE_FILE.exists():
+        return _build_vector_store_status(False, "missing_vector_store")
+
+    if not VECTOR_STORE_META_FILE.exists():
+        return _build_vector_store_status(False, "missing_vector_store_meta")
+
+    try:
+        meta = load_vector_store_meta()
+    except (OSError, ValueError):
+        return _build_vector_store_status(False, "invalid_vector_store_meta")
+
+    if not isinstance(meta, dict):
+        return _build_vector_store_status(False, "invalid_vector_store_meta")
+
+    try:
+        with VECTOR_STORE_FILE.open("r", encoding="utf-8") as file:
+            records = json.load(file)
+    except (OSError, ValueError):
+        return _build_vector_store_status(False, "invalid_vector_store", meta)
+
+    if not isinstance(records, list):
+        return _build_vector_store_status(False, "invalid_vector_store", meta)
+
+    chunk_count = meta.get("chunk_count")
+    if not isinstance(chunk_count, int) or len(records) != chunk_count:
+        return _build_vector_store_status(False, "chunk_count_mismatch", meta)
+
+    meta_sources = meta.get("source_files")
+    if not isinstance(meta_sources, list):
+        return _build_vector_store_status(False, "invalid_vector_store_meta", meta)
+
+    try:
+        current_chunks = build_knowledge_chunks(load_knowledge_files())
+        current_sources = build_source_file_meta(current_chunks)
+    except (OSError, ValueError):
+        return _build_vector_store_status(False, "source_files_changed", meta)
+
+    current_hashes = _source_hashes(current_sources)
+    stored_hashes = _source_hashes(meta_sources)
+    if len(current_chunks) != chunk_count or current_hashes != stored_hashes:
+        return _build_vector_store_status(False, "source_files_changed", meta)
+
+    return _build_vector_store_status(True, "ready", meta)
+
+
 # 计算两个向量的余弦距离：距离越小，说明用户问题和知识块越相似。
 def cosine_distance(query_vector, chunk_vector):
     dot_value = sum(left * right for left, right in zip(query_vector, chunk_vector))

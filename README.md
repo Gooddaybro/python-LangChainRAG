@@ -12,7 +12,7 @@ pip install -r requirements.txt
 $env:DASHSCOPE_API_KEY="your-dashscope-api-key"
 ```
 
-`DASHSCOPE_API_KEY` 是当前项目的统一大模型 Key。默认只用于回答生成；如需启用“学生党、显高显瘦、平价百搭”等模糊需求的大模型结构化映射，再额外设置：
+`DASHSCOPE_API_KEY` 用于知识库 embedding 和最终回答生成。如需启用“学生党、显高显瘦、平价百搭”等模糊需求的大模型结构化映射，再额外设置：
 
 ```powershell
 $env:ENABLE_LLM_PREFERENCE_MAPPER="true"
@@ -33,6 +33,14 @@ streamlit run clothing_assistant/ui/app_file_uploader.py
 ```powershell
 streamlit run clothing_assistant/ui/app_qa.py
 ```
+
+也可以直接从已提交的知识文件全量重建本地向量索引：
+
+```bash
+.venv/bin/python -m clothing_assistant.infrastructure.vector_store
+```
+
+该命令需要先配置 `DASHSCOPE_API_KEY`。生成的 `clothing_assistant/chroma_db/` 是本地派生数据，不提交到 Git。
 
 ## FastAPI Backend
 
@@ -57,6 +65,7 @@ uvicorn clothing_assistant.api.app:app --reload --port 8001
 当前接口：
 
 - `GET /health`：健康检查。
+- `GET /health/rag`：检查本地 RAG 索引是否就绪。
 - `POST /chat`：调用 LangGraph 主线 `run_langgraph_agent`。
 - `POST /chat/stream`：按 `..\outfit-project-contract\contracts\assistant-streaming-chat\v1.md` 输出 `token`、`done`、`error` SSE 事件，供 Java 后端流式转发。
 - `POST /chat/pipeline`：调用旧手写 pipeline `run_agent`，用于迁移对照和回归检查。
@@ -119,6 +128,16 @@ python -m clothing_assistant.agent.eval_report
 ```powershell
 python -m clothing_assistant.agent.answer_quality_report
 python -m unittest tests.test_answer_quality_report -v
+```
+
+生成真实向量检索报告。它不使用 fake chunks，专门统计正向问题的命中率和超出知识范围问题的错误接受率：
+
+```bash
+.venv/bin/python -m clothing_assistant.agent.retrieval_eval_report
+.venv/bin/python -m clothing_assistant.agent.retrieval_eval_report \
+  --top-k 3 \
+  --threshold 0.7 \
+  --output docs/evals/rag-retrieval.md
 ```
 
 ## Local Agent Trace

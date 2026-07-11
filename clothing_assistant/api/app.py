@@ -9,6 +9,7 @@ from clothing_assistant.api.streaming import build_error_event, iter_stream_even
 from clothing_assistant.agent.agent_executor import run_agent
 from clothing_assistant.agent.langgraph_executor import run_langgraph_agent
 from clothing_assistant.config_data import PROJECT_API_TITLE
+from clothing_assistant.infrastructure.vector_store import get_vector_store_status
 
 logger = logging.getLogger(__name__)
 INTERNAL_ERROR_MESSAGE = "AI service failed to process the request."
@@ -154,6 +155,12 @@ def health():
     健康检查接口：用于 Kubernetes 等容器服务或负载均衡器检查当前 Python 服务是否正常存活。
     """
     return {"status": "ok"}
+
+
+@app.get("/health/rag")
+def rag_health():
+    """Return RAG index readiness separately from service liveness."""
+    return get_vector_store_status()
 
 
 @app.post("/chat")

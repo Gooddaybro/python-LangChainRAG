@@ -17,6 +17,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
 
+    def test_rag_health_returns_vector_store_status(self):
+        status = {
+            "ready": True,
+            "reason": "ready",
+            "chunk_count": 34,
+            "version": "test-version",
+            "built_at": "2026-07-10T00:00:00+00:00",
+        }
+        with patch(
+            "clothing_assistant.api.app.get_vector_store_status",
+            return_value=status,
+        ):
+            response = self.client.get("/health/rag")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), status)
+
     # /chat 现在走 LangGraph 主工作流
     def test_chat_uses_java_contract_and_calls_langgraph_executor(self):
         fake_result = {
