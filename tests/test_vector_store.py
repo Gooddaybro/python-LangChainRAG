@@ -204,5 +204,33 @@ class VectorRecordMetadataTests(unittest.TestCase):
         self.assertEqual(records[0]["domain"], "scene")
 
 
+class AtomicJsonWriteTests(unittest.TestCase):
+    def get_writer(self):
+        writer = getattr(vector_store, "write_json_atomically", None)
+        self.assertIsNotNone(writer)
+        return writer
+
+    def test_atomic_write_replaces_existing_target_and_removes_temp_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "vectors.json"
+            target.write_text('{"version": "old"}', encoding="utf-8")
+
+            self.get_writer()(target, {"version": "new"})
+
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"version": "new"})
+            self.assertFalse(target.with_suffix(".json.tmp").exists())
+
+    def test_atomic_write_keeps_existing_target_when_serialization_fails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "vectors.json"
+            target.write_text('{"version": "old"}', encoding="utf-8")
+
+            with self.assertRaises(TypeError):
+                self.get_writer()(target, {"bad": {"not-json"}})
+
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"version": "old"})
+            self.assertFalse(target.with_suffix(".json.tmp").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

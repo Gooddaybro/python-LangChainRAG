@@ -957,7 +957,7 @@ git commit -m "fix: block commerce facts in pure RAG answers"
 - Produces: `write_json_atomically(path, value) -> None`
 - Keeps existing: `rebuild_vector_store(knowledge_chunks) -> list`
 
-- [ ] **Step 1: Write failing atomic-write tests**
+- [x] **Step 1: Write failing atomic-write tests**
 
 Tests must prove:
 
@@ -965,7 +965,7 @@ Tests must prove:
 - Serialization failure leaves the previous target untouched.
 - Temporary files are removed after success or failure.
 
-- [ ] **Step 2: Implement atomic JSON writes with stdlib only**
+- [x] **Step 2: Implement atomic JSON writes with stdlib only**
 
 Use a sibling temporary file and `Path.replace()`:
 
@@ -982,7 +982,7 @@ def write_json_atomically(path, value):
 
 Build all embeddings and metadata before replacing either target. Replace the vector file first and meta file last, so meta remains the readiness marker.
 
-- [ ] **Step 3: Extract uploader validation away from Streamlit side effects**
+- [x] **Step 3: Extract uploader validation away from Streamlit side effects**
 
 Create `infrastructure/knowledge_upload.py` and move only these pure helpers into it so tests never import and execute the Streamlit page:
 
@@ -994,18 +994,18 @@ compare_uploaded_files
 
 Do not move Streamlit rendering or add a class hierarchy.
 
-- [ ] **Step 4: Make uploader copy dynamic**
+- [x] **Step 4: Make uploader copy dynamic**
 
 Every count and label must use `len(KNOWLEDGE_FILES)`. The page must list the configured names instead of mentioning three fixed files.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 ```bash
 .venv/bin/python -m unittest tests.test_vector_store tests.test_app_file_uploader -v
 .venv/bin/python -m compileall -q clothing_assistant tests
 ```
 
-- [ ] **Step 6: Commit safe updates**
+- [x] **Step 6: Commit safe updates**
 
 ```bash
 git add clothing_assistant/infrastructure/vector_store.py clothing_assistant/infrastructure/knowledge_upload.py clothing_assistant/ui/app_file_uploader.py tests/test_vector_store.py tests/test_app_file_uploader.py

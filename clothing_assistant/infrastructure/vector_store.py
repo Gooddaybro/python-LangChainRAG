@@ -73,6 +73,30 @@ class JinaEmbeddings:
         return self._embed([text], "retrieval.query")[0]
 
 
+def write_json_atomically(path, value):
+    """Write JSON through a sibling temporary file, preserving the old target on failure.
+
+    Args:
+        path: JSON file to replace after serialization completes.
+        value: JSON-serializable value to persist.
+
+    Raises:
+        TypeError: If ``value`` cannot be serialized as JSON.
+        OSError: If the temporary file cannot be written or replaced.
+    """
+    path = Path(path)
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with temporary_path.open("w", encoding="utf-8") as file:
+            json.dump(value, file, ensure_ascii=False)
+        temporary_path.replace(path)
+    finally:
+        # 序列化或替换失败时，旧索引仍在；只清理未完成的临时文件。
+        temporary_path.unlink(missing_ok=True)
+
+
 # 初始化 embedding 客户端：知识文本和用户问题必须使用同一模型，向量才有可比性。
 def get_embeddings():
     global _EMBEDDINGS_CACHE
@@ -262,13 +286,11 @@ def rebuild_vector_store(knowledge_chunks):
 
     VECTOR_DB_DIR.mkdir(parents=True, exist_ok=True)
     vector_records = build_vector_records_from_chunks(knowledge_chunks)
+    vector_store_meta = build_vector_store_meta(knowledge_chunks)
 
-    # 写入 JSON 是为了教学阶段可观察：能明确看到“文本块已经被转成向量并保存起来”。
-    with VECTOR_STORE_FILE.open("w", encoding="utf-8") as file:
-        json.dump(vector_records, file, ensure_ascii=False)
-
-    with VECTOR_STORE_META_FILE.open("w", encoding="utf-8") as file:
-        json.dump(build_vector_store_meta(knowledge_chunks), file, ensure_ascii=False)
+    # meta 是索引就绪标记，最后替换；重建失败时旧 meta 仍会阻止半成品被当成可用索引。
+    write_json_atomically(VECTOR_STORE_FILE, vector_records)
+    write_json_atomically(VECTOR_STORE_META_FILE, vector_store_meta)
 
     _VECTOR_DATA_CACHE = vector_records
 
