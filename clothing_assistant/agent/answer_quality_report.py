@@ -227,6 +227,7 @@ def evaluate_answer_quality_case(
             chat_history=case.get("chat_history"),
             tool_registry=tool_registry_factory(case.get("tool_fixture")),
             answer_generator=answer_generator,
+            allow_demo_catalog=True,
         )
         answer = result["answer"]
         debug = result["debug"]

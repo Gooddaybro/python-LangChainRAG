@@ -368,6 +368,25 @@ def missing_info_gate_node(state):
     if intent in {INTENT_INVENTORY_CHECK, INTENT_PRICE_CHECK}:
         candidates = state.get("candidates", [])
 
+        if not candidates and not state.get("allow_demo_catalog", False):
+            result = {
+                "missing_fields": ["authoritative_candidates"],
+                "can_continue": False,
+                "reason": "java_candidates_missing",
+            }
+            return {
+                "missing_info_result": result,
+                "answer": "当前无法读取商品实时数据，暂时不能核实价格或库存，请稍后重试。",
+                "final_prompt": "missing authoritative Java candidates; no local catalog lookup.",
+                "stop_reason": "missing_authoritative_candidates",
+                "trace_events": make_trace(
+                    "missing_info_gate",
+                    can_continue=False,
+                    missing_fields=result["missing_fields"],
+                    reason=result["reason"],
+                ),
+            }
+
         if candidates:
             match_result = find_matching_candidate_products(state["user_query"], candidates)
             matched_candidates = match_result.get("candidates", [])

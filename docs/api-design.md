@@ -89,10 +89,40 @@ Request body:
 
 ```json
 {
+  "request_id": "req-api-001",
+  "session_id": "session-api-001",
+  "thread_id": "thread-api-001",
   "query": "基础款纯棉T恤黑色L码有货吗？",
   "chat_history": [],
-  "thread_id": "api-test-001",
-  "debug": true
+  "user_context": {
+    "height_cm": 175,
+    "weight_kg": 70,
+    "preferred_colors": ["黑色"]
+  },
+  "candidates": [
+    {
+      "spu_id": 1001,
+      "sku_id": 2001,
+      "sku_code": "TS-BASIC-001-BLACK-L",
+      "name": "基础款纯棉T恤",
+      "color": "黑色",
+      "size": "L",
+      "sale_price": 99,
+      "stock_status": "in_stock",
+      "available_stock": 8
+    }
+  ],
+  "demand_intent": {
+    "version": "demand-intent-v1",
+    "source": "java-rule",
+    "rawQuery": "基础款纯棉T恤黑色L码有货吗？",
+    "category": "T恤",
+    "scene": [],
+    "style": [],
+    "hardFilters": ["color=黑色", "size=L"],
+    "softPreferences": []
+  },
+  "debug": false
 }
 ```
 
@@ -100,10 +130,20 @@ Request body:
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
+| `request_id` | 字符串 | 是 | 无 | Java 生成的、有界请求 ID；正常响应和安全错误响应可用于关联本次调用。 |
+| `session_id` | 字符串 | 是 | 无 | Java 会话 ID。 |
+| `thread_id` | 字符串/null | 否 | `session_id` | 可选的 LangGraph 线程 ID；为空时 Python 使用 `session_id`。 |
 | `query` | 字符串 | 是 | 无 | 用户问题。不能为空或纯空白。 |
 | `chat_history` | 数组 | 否 | `[]` | 显式传入的历史对话。当前仍用于追问解析。 |
-| `thread_id` | 字符串/null | 否 | 自动生成 | LangGraph checkpoint/debug 的会话 id。 |
-| `debug` | 布尔值 | 否 | `false` | 是否返回内部 debug 信息。生产默认应为 `false`。 |
+| `user_context` | 对象 | 否 | `{}` | Java 提供的只读用户画像上下文。 |
+| `candidates` | 数组 | 否 | `[]` | Java 为本轮过滤出的 SKU 候选；生产价格、库存、SKU、颜色和尺码事实只来自此列表。 |
+| `demand_intent` | 对象/null | 否 | `null` | Java 统一解析出的需求意图。 |
+| `debug` | 布尔值 | 否 | `false` | 是否请求内部 debug 信息；仅当本地服务启用 `DEBUG_RESPONSE_ENABLED=true` 时才会返回。 |
+
+Production defaults to `DEBUG_RESPONSE_ENABLED=false`. Debug payloads are returned
+only when **both** `debug=true` and `DEBUG_RESPONSE_ENABLED=true`; `debug=true` is an
+internal local-diagnostics request, not a client entitlement. Validation logs record
+only a safe request id, method, path, and sanitized field errors.
 
 `chat_history` item 当前推荐结构：
 
@@ -118,26 +158,44 @@ Request body:
 
 ### 5.1 普通响应
 
-当 `debug=false` 时，接口只返回用户可见答案：
+当 debug payload 未同时满足 `debug=true` 和
+`DEBUG_RESPONSE_ENABLED=true` 时，接口返回 v1 的用户可见响应：
 
 ```json
 {
-  "answer": "基础款纯棉T恤黑色 L 码有货，当前库存 8 件。"
+  "request_id": "req-api-001",
+  "answer": "基础款纯棉T恤黑色 L 码有货，当前库存 8 件。",
+  "intent": "inventory_check",
+  "product_refs": [],
+  "suggested_actions": []
 }
 ```
+
+| 字段 | 说明 |
+| --- | --- |
+| `request_id` | 回传本次请求的 `request_id`。 |
+| `answer` | 用户可见的回答。 |
+| `intent` | Python 工作流识别的本次意图。 |
+| `product_refs` | 只引用本次 Java `candidates` 中的商品；无推荐时为 `[]`。 |
+| `suggested_actions` | Java 或前端可执行的建议动作；无动作时为 `[]`。 |
 
 生产环境默认应使用这个模式，避免暴露内部 trace、检索资料和业务数据细节。
 
 ### 5.2 调试响应
 
-当 `debug=true` 时，接口返回完整 Agent 结果：
+仅当请求为 `debug=true` 且本地服务启用 `DEBUG_RESPONSE_ENABLED=true` 时，
+接口才在同一个 v1 响应中附加 `debug`。以下示例假设本地已启用该设置：
 
 ```json
 {
+  "request_id": "req-api-001",
   "answer": "基础款纯棉T恤黑色 L 码有货，当前库存 8 件。",
+  "intent": "inventory_check",
+  "product_refs": [],
+  "suggested_actions": [],
   "debug": {
     "user_query": "基础款纯棉T恤黑色L码有货吗？",
-    "thread_id": "api-test-001",
+    "thread_id": "thread-api-001",
     "run_id": "run-...",
     "intent_result": {
       "intent": "inventory_check",
@@ -173,39 +231,45 @@ Debug 字段用于开发、测试、eval 和排查，不建议直接暴露给普
 
 ### 6.1 精确事实
 
-库存、价格、SKU、颜色列表、尺码规则 id 必须来自结构化数据：
+生产环境中的库存、价格、SKU、颜色和尺码事实必须来自 Java 请求的
+`candidates`，不是 `product_catalog.json`：
 
 ```text
-clothing_assistant/data/product_catalog.json
+Java candidates -> structured_lookup
 ```
 
-这些问题应该走：
-
-```text
-structured_lookup
-```
-
-不能通过 RAG 或大模型编造。
-
-示例：
+Java 应在调用 `/chat` 前构建候选 SKU。一个精确库存问题的 v1 请求示例：
 
 ```json
 {
-  "query": "基础款纯棉T恤多少钱？",
-  "debug": true
+  "request_id": "req-exact-001",
+  "session_id": "session-exact-001",
+  "query": "基础款纯棉T恤黑色L码有货吗？",
+  "chat_history": [],
+  "user_context": {},
+  "candidates": [
+    {
+      "spu_id": 1001,
+      "sku_id": 2001,
+      "sku_code": "TS-BASIC-001-BLACK-L",
+      "name": "基础款纯棉T恤",
+      "color": "黑色",
+      "size": "L",
+      "sale_price": 99,
+      "stock_status": "in_stock",
+      "available_stock": 8
+    }
+  ],
+  "debug": false
 }
 ```
 
-预期：
-
-```json
-{
-  "selected_tools": ["structured_lookup"],
-  "structured_result": {
-    "price_cny": 99
-  }
-}
-```
+这些问题通过 `structured_lookup` 处理，不能通过 RAG 或大模型编造。
+若 Java 传入空 `candidates`，价格或库存问题以
+`missing_authoritative_candidates` 停止：不会选择工具、不会断言价格或库存，
+也不会返回 `product_refs`。本地
+`clothing_assistant/data/product_catalog.json` 仅可在显式
+`allow_demo_catalog=True` 的 demo/test 路径使用，不能补全生产事实。
 
 ### 6.2 语义知识
 
@@ -221,12 +285,15 @@ rag_retriever -> retrieval_grader
 
 ```json
 {
+  "request_id": "req-semantic-001",
+  "session_id": "session-semantic-001",
   "query": "日常通勤推荐什么颜色？",
-  "debug": true
+  "candidates": [],
+  "debug": false
 }
 ```
 
-预期：
+如果本地调试同时满足 `debug=true` 和 `DEBUG_RESPONSE_ENABLED=true`，debug 中的预期路由为：
 
 ```json
 {
@@ -247,12 +314,15 @@ rag_retriever -> retrieval_grader
 
 ```json
 {
+  "request_id": "req-missing-001",
+  "session_id": "session-missing-001",
   "query": "黑色M码有货吗？",
-  "debug": true
+  "candidates": [],
+  "debug": false
 }
 ```
 
-预期：
+如果本地调试同时满足 `debug=true` 和 `DEBUG_RESPONSE_ENABLED=true`，缺少商品名时的预期状态为：
 
 ```json
 {
@@ -278,9 +348,15 @@ rag_retriever -> retrieval_grader
       "loc": ["body", "query"],
       "msg": "String should have at least 1 character"
     }
-  ]
+  ],
+  "body": {
+    "request_id": "req-api-001"
+  }
 }
 ```
+
+`detail` 仅包含已清理的字段位置、错误类型和消息，`body` 仅包含安全的
+`request_id`，或在缺失/无效时为 `null`；不会回显原始请求值。
 
 ### 7.2 内部错误
 
@@ -289,11 +365,12 @@ rag_retriever -> retrieval_grader
 ```json
 {
   "error": "internal_server_error",
-  "detail": "error message"
+  "request_id": "req-...",
+  "message": "AI service failed to process the request."
 }
 ```
 
-生产化后应进一步收敛 `detail`，避免把内部异常暴露给外部调用方。
+该响应不暴露异常文本、堆栈、prompt 或内部路径；安全的 `request_id` 无法取得时为 `null`。
 
 ## 8. API 测试
 
@@ -318,10 +395,25 @@ Invoke-RestMethod -Method Post `
   -Uri "http://127.0.0.1:8000/chat" `
   -ContentType "application/json; charset=utf-8" `
   -Body (@{
+    request_id = "req-powershell-001"
+    session_id = "session-powershell-001"
     query = "基础款纯棉T恤黑色L码有货吗？"
     chat_history = @()
-    thread_id = "api-test-001"
-    debug = $true
+    user_context = @{}
+    candidates = @(
+      @{
+        spu_id = 1001
+        sku_id = 2001
+        sku_code = "TS-BASIC-001-BLACK-L"
+        name = "基础款纯棉T恤"
+        color = "黑色"
+        size = "L"
+        sale_price = 99
+        stock_status = "in_stock"
+        available_stock = 8
+      }
+    )
+    debug = $false
   } | ConvertTo-Json -Depth 10)
 ```
 
@@ -347,11 +439,28 @@ import java.net.http.HttpResponse;
 
 public class ClothingAssistantClient {
     public static void main(String[] args) throws Exception {
+        // Java 从商品服务构建当前请求可用的候选 SKU；Python 不读取本地目录补全事实。
         String body = """
             {
+              "request_id": "req-java-001",
+              "session_id": "session-java-001",
+              "thread_id": "thread-java-001",
               "query": "基础款纯棉T恤黑色L码有货吗？",
               "chat_history": [],
-              "thread_id": "java-client-001",
+              "user_context": {},
+              "candidates": [
+                {
+                  "spu_id": 1001,
+                  "sku_id": 2001,
+                  "sku_code": "TS-BASIC-001-BLACK-L",
+                  "name": "基础款纯棉T恤",
+                  "color": "黑色",
+                  "size": "L",
+                  "sale_price": 99,
+                  "stock_status": "in_stock",
+                  "available_stock": 8
+                }
+              ],
               "debug": false
             }
             """;
@@ -378,8 +487,9 @@ public class ClothingAssistantClient {
 - `/chat` already uses LangGraph main workflow.
 - `thread_id` is passed to LangGraph checkpointer/debug config.
 - `chat_history` is still explicitly passed by the caller.
-- `debug=false` hides internal debug data.
-- `product_catalog.json` is the current structured data source.
+- Debug payloads are returned only when both `debug=true` and `DEBUG_RESPONSE_ENABLED=true`.
+- Java `candidates` are the production source for price, inventory, SKU, color, and size facts.
+- `product_catalog.json` is only an explicit `allow_demo_catalog=True` demo/test fixture.
 
 生产部署前：
 
@@ -388,7 +498,7 @@ public class ClothingAssistantClient {
 - Add timeout and retry policy for model calls.
 - Replace local `InMemorySaver` with database checkpointer.
 - Decide whether `thread_id` should fully own conversation memory.
-- Hide internal exception details in `500` responses.
+- Preserve the safe `500` response shape without exception text.
 - Add rate limiting and request size limits.
 - Add Docker/deployment instructions.
 
@@ -398,5 +508,5 @@ public class ClothingAssistantClient {
 - There is no authentication.
 - There is no production database checkpointer.
 - `chat_history` still needs to be provided for reliable follow-up behavior.
-- `debug=true` is intended for development only.
-- Product catalog is JSON; SQLite/Postgres can replace it later without changing the API contract.
+- Debug payloads require both `debug=true` and `DEBUG_RESPONSE_ENABLED=true` and are intended for development only.
+- `product_catalog.json` is an explicit `allow_demo_catalog=True` demo/test fixture; Java `candidates` remain the production commerce fact source.

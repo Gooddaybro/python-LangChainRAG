@@ -300,6 +300,7 @@ class LangGraphShadowTests(unittest.TestCase):
                     chat_history=case.get("chat_history"),
                     tool_registry=registry,
                     answer_generator=fake_answer_generator,
+                    allow_demo_catalog=True,
                 )
                 debug = result["debug"]
 

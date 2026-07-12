@@ -44,10 +44,13 @@ class ApiTests(unittest.TestCase):
             },
         }
 
-        with patch(
-            "clothing_assistant.api.app.run_langgraph_agent",
-            return_value=fake_result,
-        ) as mock_run:
+        with (
+            patch(
+                "clothing_assistant.api.app.run_langgraph_agent",
+                return_value=fake_result,
+            ) as mock_run,
+            patch("clothing_assistant.api.app.is_debug_response_enabled", return_value=True),
+        ):
             response = self.client.post(
                 "/chat",
                 json={
@@ -91,10 +94,13 @@ class ApiTests(unittest.TestCase):
             },
         }
 
-        with patch(
-            "clothing_assistant.api.app.run_langgraph_agent",
-            return_value=fake_result,
-        ) as mock_run:
+        with (
+            patch(
+                "clothing_assistant.api.app.run_langgraph_agent",
+                return_value=fake_result,
+            ) as mock_run,
+            patch("clothing_assistant.api.app.is_debug_response_enabled", return_value=True),
+        ):
             response = self.client.post(
                 "/chat",
                 json={
@@ -151,6 +157,48 @@ class ApiTests(unittest.TestCase):
                 "suggested_actions": [],
             },
         )
+
+    def test_chat_hides_debug_when_debug_responses_are_disabled(self):
+        fake_result = {
+            "answer": "fake answer",
+            "debug": {"intent_result": {"intent": "chat"}, "trace_events": [{"step": "secret"}]},
+        }
+        with (
+            patch("clothing_assistant.api.app.run_langgraph_agent", return_value=fake_result),
+            patch("clothing_assistant.api.app.is_debug_response_enabled", return_value=False),
+        ):
+            response = self.client.post(
+                "/chat",
+                json={
+                    "request_id": "req-debug-disabled",
+                    "session_id": "session-debug-disabled",
+                    "query": "你是谁？",
+                    "debug": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("debug", response.json())
+        self.assertNotIn("trace_events", response.text)
+
+    def test_chat_includes_debug_only_when_enabled(self):
+        fake_result = {"answer": "fake answer", "debug": {"intent_result": {"intent": "chat"}}}
+        with (
+            patch("clothing_assistant.api.app.run_langgraph_agent", return_value=fake_result),
+            patch("clothing_assistant.api.app.is_debug_response_enabled", return_value=True),
+        ):
+            response = self.client.post(
+                "/chat",
+                json={
+                    "request_id": "req-debug-enabled",
+                    "session_id": "session-debug-enabled",
+                    "query": "你是谁？",
+                    "debug": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["debug"], fake_result["debug"])
 
     def test_chat_returns_product_refs_from_agent_result(self):
         product_refs = [
@@ -235,31 +283,78 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
 
-    def test_chat_validation_error_does_not_echo_sensitive_body(self):
-        response = self.client.post(
-            "/chat",
-            json={
-                "request_id": "req-api-sensitive-validation",
-                "session_id": "session-api-sensitive-validation",
-                "query": "   ",
-                "user_context": {
-                    "user_id": 10001,
-                    "preferred_colors": ["secret-color"],
+    def assert_invalid_request_id_is_not_echoed_or_logged(self, invalid_request_id):
+        secret = "raw-request-id-secret"
+        with (
+            patch("clothing_assistant.api.app.logger.warning") as mock_warning,
+            patch("clothing_assistant.api.app.logger.error") as mock_error,
+        ):
+            response = self.client.post(
+                "/chat",
+                json={
+                    "request_id": invalid_request_id,
+                    "session_id": "session-invalid-request-id",
+                    "query": "   ",
                 },
-                "candidates": [
-                    {
-                        "spu_id": 1002,
-                        "sku_id": 2101,
-                        "name": "secret candidate",
-                    }
-                ],
-            },
+            )
+
+        logged_text = " ".join(
+            str(argument)
+            for call in mock_warning.call_args_list
+            for argument in call.args
         )
+        self.assertEqual(response.status_code, 422)
+        self.assertIsNone(response.json()["body"])
+        self.assertNotIn(secret, response.text)
+        self.assertNotIn(secret, logged_text)
+        mock_error.assert_not_called()
+
+    def test_chat_does_not_echo_or_log_object_request_id(self):
+        self.assert_invalid_request_id_is_not_echoed_or_logged({"trace": "raw-request-id-secret"})
+
+    def test_chat_does_not_echo_or_log_array_request_id(self):
+        self.assert_invalid_request_id_is_not_echoed_or_logged(["raw-request-id-secret"])
+
+    def test_chat_does_not_echo_or_log_oversized_request_id(self):
+        self.assert_invalid_request_id_is_not_echoed_or_logged("raw-request-id-secret" * 20)
+
+    def test_chat_validation_error_does_not_echo_sensitive_body(self):
+        with (
+            patch("clothing_assistant.api.app.logger.warning") as mock_log_warning,
+            patch("clothing_assistant.api.app.logger.error") as mock_log_error,
+        ):
+            response = self.client.post(
+                "/chat",
+                json={
+                    "request_id": "req-api-sensitive-validation",
+                    "session_id": "session-api-sensitive-validation",
+                    "query": "   ",
+                    "user_context": {
+                        "user_id": 10001,
+                        "preferred_colors": ["secret-color"],
+                    },
+                    "candidates": [
+                        {
+                            "spu_id": 1002,
+                            "sku_id": 2101,
+                            "name": "secret candidate",
+                        }
+                    ],
+                },
+            )
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.json()["body"], {"request_id": "req-api-sensitive-validation"})
         self.assertNotIn("secret-color", response.text)
         self.assertNotIn("secret candidate", response.text)
+        logged_arguments = " ".join(
+            str(argument)
+            for call in mock_log_warning.call_args_list + mock_log_error.call_args_list
+            for argument in call.args
+        )
+        self.assertNotIn("secret-color", logged_arguments)
+        self.assertNotIn("secret candidate", logged_arguments)
+        mock_log_error.assert_not_called()
 
     def test_chat_missing_field_validation_does_not_echo_sensitive_body(self):
         response = self.client.post(
@@ -363,17 +458,75 @@ class ApiTests(unittest.TestCase):
         )
         self.assertNotIn("secret internal detail", response.text)
 
+    def assert_chat_executor_error_does_not_echo_or_log_invalid_request_id(self, invalid_request_id):
+        with (
+            patch(
+                "clothing_assistant.api.app.run_langgraph_agent",
+                side_effect=RuntimeError("executor failure"),
+            ),
+            patch("clothing_assistant.api.app.logger.exception") as mock_log_exception,
+        ):
+            response = self.client.post(
+                "/chat",
+                json={
+                    "request_id": invalid_request_id,
+                    "session_id": "session-invalid-error-request-id",
+                    "query": "你是谁？",
+                },
+            )
+
+        logged_text = " ".join(
+            str(argument)
+            for call in mock_log_exception.call_args_list
+            for argument in call.args
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertIsNone(response.json()["request_id"])
+        self.assertNotIn(invalid_request_id, response.text)
+        self.assertNotIn(invalid_request_id, logged_text)
+        mock_log_exception.assert_called_once()
+
+    def test_chat_executor_error_does_not_echo_or_log_whitespace_punctuation_request_id(self):
+        self.assert_chat_executor_error_does_not_echo_or_log_invalid_request_id("raw request/id-secret")
+
+    def test_chat_executor_error_does_not_echo_or_log_oversized_request_id(self):
+        self.assert_chat_executor_error_does_not_echo_or_log_invalid_request_id("raw-request-id-secret" * 20)
+
     # /chat/pipeline 走旧手写 pipeline
+    def test_pipeline_hides_debug_when_debug_responses_are_disabled(self):
+        fake_result = {
+            "answer": "pipeline answer",
+            "debug": {"trace_events": [{"step": "secret"}]},
+        }
+
+        with (
+            patch("clothing_assistant.api.app.run_agent", return_value=fake_result),
+            patch("clothing_assistant.api.app.is_debug_response_enabled", return_value=False),
+        ):
+            response = self.client.post(
+                "/chat/pipeline",
+                json={
+                    "query": "我 175cm 70kg 穿什么码？",
+                    "debug": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"answer": "pipeline answer"})
+
     def test_pipeline_calls_pipeline_executor(self):
         fake_result = {
             "answer": "pipeline answer",
             "debug": {"stop_reason": "final_answer"},
         }
 
-        with patch(
-            "clothing_assistant.api.app.run_agent",
-            return_value=fake_result,
-        ) as mock_run:
+        with (
+            patch(
+                "clothing_assistant.api.app.run_agent",
+                return_value=fake_result,
+            ) as mock_run,
+            patch("clothing_assistant.api.app.is_debug_response_enabled", return_value=True),
+        ):
             response = self.client.post(
                 "/chat/pipeline",
                 json={
@@ -388,16 +541,40 @@ class ApiTests(unittest.TestCase):
         mock_run.assert_called_once_with("我 175cm 70kg 穿什么码？", chat_history=[])
 
     # /chat/langgraph 保留旧路径，仍然可用
+    def test_langgraph_hides_debug_when_debug_responses_are_disabled(self):
+        fake_result = {
+            "answer": "shadow answer",
+            "debug": {"trace_events": [{"step": "secret"}]},
+        }
+
+        with (
+            patch("clothing_assistant.api.app.run_langgraph_agent", return_value=fake_result),
+            patch("clothing_assistant.api.app.is_debug_response_enabled", return_value=False),
+        ):
+            response = self.client.post(
+                "/chat/langgraph",
+                json={
+                    "query": "这件衣服适合夏天吗？",
+                    "debug": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"answer": "shadow answer"})
+
     def test_langgraph_endpoint_still_works(self):
         fake_result = {
             "answer": "shadow answer",
             "debug": {"stop_reason": "final_answer"},
         }
 
-        with patch(
-            "clothing_assistant.api.app.run_langgraph_agent",
-            return_value=fake_result,
-        ) as mock_run:
+        with (
+            patch(
+                "clothing_assistant.api.app.run_langgraph_agent",
+                return_value=fake_result,
+            ) as mock_run,
+            patch("clothing_assistant.api.app.is_debug_response_enabled", return_value=True),
+        ):
             response = self.client.post(
                 "/chat/langgraph",
                 json={

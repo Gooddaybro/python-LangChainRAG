@@ -25,7 +25,8 @@
 
 | 数据来源 | 当前文件或模块 | 负责内容 | 使用节点 |
 | --- | --- | --- | --- |
-| 商品目录 | `clothing_assistant/data/product_catalog.json` | 商品、SKU、价格、库存、颜色、尺码规则 id、政策 id | `structured_lookup` |
+| Java 候选商品 | API 请求的 `candidates` | 当前请求可用的 SKU、价格、库存、颜色、尺码 | `structured_lookup` |
+| 本地商品目录 | `clothing_assistant/data/product_catalog.json` | 独立 demo/test fixture | `structured_lookup`（仅 `allow_demo_catalog=True`） |
 | 商品知识文件 | `clothing_assistant/data/*.txt` | 颜色、洗涤、尺码、场景、材质、版型的解释性知识 | `rag_retriever` |
 | 向量库 | `clothing_assistant/chroma_db/` | 文本 chunk 的向量索引 | `rag_tool` |
 | 请求历史 | API 请求里的 `chat_history` | 当前追问需要的显式历史 | `context_resolver` |
@@ -36,13 +37,19 @@
 
 结构化数据负责所有必须精确、可校验、可追责的业务事实。
 
-当前结构化数据文件：
+生产结构化数据来自 Java 请求里的 `candidates`。
+
+`product_catalog.json` is a standalone demo/test fixture. It is reachable only
+when `allow_demo_catalog=True`; production HTTP requests must obtain price,
+inventory, SKU, and color/size availability from Java `candidates`.
+
+本地 demo fixture 文件：
 
 ```text
 clothing_assistant/data/product_catalog.json
 ```
 
-当前商品字段：
+本地 fixture 的商品字段：
 
 ```json
 {
@@ -65,11 +72,11 @@ clothing_assistant/data/product_catalog.json
 
 | 问题类型 | 示例 | 原因 |
 | --- | --- | --- |
-| 库存 | `基础款纯棉T恤黑色L码有货吗？` | 库存是实时/准实时事实，不能由模型猜 |
-| 价格 | `基础款纯棉T恤多少钱？` | 价格必须和目录一致 |
-| SKU / 商品 id | `TS-BASIC-001 是哪件？` | 商品身份必须精确 |
-| 可选颜色 | `这件 T 恤有哪些颜色？` | 颜色列表来自商品目录 |
-| 尺码规则 id | `这件衣服用哪个尺码规则？` | 不同商品可能绑定不同尺码规则 |
+| 库存 | `基础款纯棉T恤黑色L码有货吗？` | 库存是实时/准实时事实，必须来自 Java candidates |
+| 价格 | `基础款纯棉T恤多少钱？` | 价格必须来自 Java candidates |
+| SKU / 商品 id | `TS-BASIC-001 是哪件？` | 商品身份必须精确且可追溯到 Java candidates |
+| 可选颜色 | `这件 T 恤有哪些颜色？` | 颜色列表来自 Java candidates |
+| 尺码规则 id | `这件衣服用哪个尺码规则？` | 不同商品可能绑定不同规则，生产请求由 Java 提供 |
 | 政策 id | `这件商品适用什么售后规则？` | 后续可接结构化政策表 |
 
 结构化查询节点输出应该包含：
@@ -84,16 +91,19 @@ clothing_assistant/data/product_catalog.json
   "stock_count": 8,
   "in_stock": true,
   "missing_fields": [],
-  "reason": "库存来自 product_catalog.json。"
+  "reason": "库存来自 Java 候选商品。"
 }
 ```
 
 生产要求：
 
 - 库存回答必须包含 `stock_count` 或明确说明无货/缺字段。
-- 价格回答必须来自 `price_cny`。
+- 价格回答必须来自 Java candidates 中的 `sale_price`（结构化结果可保持 `price_cny` 字段）。
 - 商品匹配不唯一时必须追问，不能任选一个。
 - 颜色或尺码缺失时必须进入 `missing_info_gate`。
+- 价格或库存问题没有 Java candidates 时，`missing_info_gate` 必须以
+  `missing_authoritative_candidates` 安全停止，不调用本地 catalog、
+  `structured_lookup` 或 RAG。
 - 结构化数据字段变化时，需要同步更新测试和本文档。
 
 ## 4. RAG 数据边界
@@ -208,12 +218,15 @@ debug 不应该长期公开给普通用户，因为它可能暴露：
 
 | 场景 | 当前行为 | 生产原则 |
 | --- | --- | --- |
+| 价格/库存缺 Java candidates | `missing_info_gate` 以 `missing_authoritative_candidates` 停止 | 不用本地 catalog 补全事实，`product_refs` 保持空 |
 | 缺商品 | `missing_info_gate` 追问商品名或 SKU | 不猜商品 |
 | 缺颜色/尺码 | `missing_info_gate` 追问颜色或尺码 | 不猜库存 |
 | 价格查询无商品 | `missing_info_gate` 追问商品 | 不返回模糊价格 |
 | RAG 弱证据 | `fallback_answer` 保守兜底 | 不编造解释 |
 | 政策无来源 | `policy_fallback` 引导人工确认 | 不编造售后规则 |
 | 无法识别意图 | `direct_answer_gate` 引导补充范围 | 不进入工具链 |
+
+没有 Java candidates 时，通用的穿搭、颜色、材质或洗护建议仍可回答；但价格、库存等商品事实以及 `product_refs` 不可返回。
 
 ## 8. 测试边界
 
@@ -230,8 +243,9 @@ tests/test_eval_report.py
 应该覆盖：
 
 - 缺信息是否追问。
-- 库存是否只走 `structured_lookup`。
-- 价格是否只来自 `product_catalog.json`。
+- 库存和价格是否只由 Java candidates 走 `structured_lookup`。
+- 生产请求无 candidates 时是否以 `missing_authoritative_candidates` 安全停止。
+- `allow_demo_catalog=True` 时本地 fixture 是否仍只服务 demo/test。
 - RAG 是否经过 `retrieval_grader`。
 - 弱检索是否触发 `answer_fallback`。
 - debug 是否暴露结构化证据。
@@ -248,8 +262,8 @@ python -m unittest discover -v
 
 推荐顺序：
 
-1. 为 `product_catalog.json` 增加 JSON schema 校验。
-2. 把商品目录迁移到 SQLite，保留当前查询函数作为适配层。
+1. 为 demo/test 的 `product_catalog.json` 增加 JSON schema 校验。
+2. 为 Java candidates 的生产结构化事实接口增加字段校验和可观测性。
 3. 增加结构化政策表，例如 `policy_catalog.json`。
 4. 把 `thread_id` 和短期 memory 绑定到数据库 checkpointer。
 5. 增加 `docs/eval-plan.md`，把路由评测和答案质量评测分开。

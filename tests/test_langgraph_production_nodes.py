@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from clothing_assistant.agent.langgraph_executor import run_langgraph_agent
 from clothing_assistant.agent.nodes import (
@@ -179,6 +180,7 @@ class LangGraphProductionNodeTests(unittest.TestCase):
             "黑色有货吗？",
             tool_registry=build_registry(),
             answer_generator=fake_answer_generator,
+            allow_demo_catalog=True,
         )
         debug = result["debug"]
 
@@ -192,6 +194,7 @@ class LangGraphProductionNodeTests(unittest.TestCase):
             "基础款纯棉T恤黑色L码有货吗？",
             tool_registry=build_registry(),
             answer_generator=fake_answer_generator,
+            allow_demo_catalog=True,
         )
         debug = result["debug"]
 
@@ -207,6 +210,7 @@ class LangGraphProductionNodeTests(unittest.TestCase):
             "基础款纯棉T恤多少钱？",
             tool_registry=build_registry(),
             answer_generator=fake_answer_generator,
+            allow_demo_catalog=True,
         )
         debug = result["debug"]
 
@@ -215,6 +219,54 @@ class LangGraphProductionNodeTests(unittest.TestCase):
         self.assertEqual(debug["validation_result"]["reason"], "structured facts validated")
         self.assertIn("99", result["answer"])
         self.assertNotIn("参考资料：", result["answer"])
+
+    def test_production_inventory_without_java_candidates_does_not_use_local_catalog(self):
+        with (
+            patch(
+                "clothing_assistant.agent.nodes.find_matching_product",
+                side_effect=AssertionError("local match called"),
+            ),
+            patch(
+                "clothing_assistant.agent.nodes.run_structured_lookup",
+                side_effect=AssertionError("local lookup called"),
+            ),
+        ):
+            result = run_langgraph_agent(
+                "基础款纯棉T恤黑色L码有货吗？",
+                tool_registry=build_registry(),
+                answer_generator=fake_answer_generator,
+            )
+
+        self.assertEqual(result["debug"]["stop_reason"], "missing_authoritative_candidates")
+        self.assertEqual(result["debug"]["selected_tools"], [])
+        self.assertEqual(
+            result["debug"]["missing_info_result"]["missing_fields"],
+            ["authoritative_candidates"],
+        )
+        self.assertEqual(result["product_refs"], [])
+        self.assertNotIn("8 件", result["answer"])
+
+    def test_production_price_without_java_candidates_does_not_use_local_catalog(self):
+        with (
+            patch(
+                "clothing_assistant.agent.nodes.find_matching_product",
+                side_effect=AssertionError("local match called"),
+            ),
+            patch(
+                "clothing_assistant.agent.nodes.run_structured_lookup",
+                side_effect=AssertionError("local lookup called"),
+            ),
+        ):
+            result = run_langgraph_agent(
+                "基础款纯棉T恤多少钱？",
+                tool_registry=build_registry(),
+                answer_generator=fake_answer_generator,
+            )
+
+        self.assertEqual(result["debug"]["stop_reason"], "missing_authoritative_candidates")
+        self.assertEqual(result["debug"]["selected_tools"], [])
+        self.assertEqual(result["product_refs"], [])
+        self.assertNotIn("99", result["answer"])
 
     def test_semantic_question_uses_rag_and_rule_grader(self):
         result = run_langgraph_agent(

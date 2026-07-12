@@ -25,7 +25,11 @@ def run_selected_agent(
 ):
     """根据页面选择运行 LangGraph 主线或旧 Pipeline 对照。"""
     if execution_mode == LANGGRAPH_MODE:
-        return langgraph_runner(clean_query, chat_history=chat_history)
+        return langgraph_runner(
+            clean_query,
+            chat_history=chat_history,
+            allow_demo_catalog=True,
+        )
 
     return pipeline_runner(clean_query, chat_history=chat_history)
 

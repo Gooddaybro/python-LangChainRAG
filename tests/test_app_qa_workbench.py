@@ -19,8 +19,8 @@ class AgentWorkbenchTests(unittest.TestCase):
             calls.append(("pipeline", query, chat_history))
             return {"answer": "pipeline answer", "debug": {}}
 
-        def langgraph_runner(query, chat_history=None):
-            calls.append(("langgraph", query, chat_history))
+        def langgraph_runner(query, chat_history=None, allow_demo_catalog=False):
+            calls.append(("langgraph", query, chat_history, allow_demo_catalog))
             return {"answer": "langgraph answer", "debug": {}}
 
         result = run_selected_agent(
@@ -41,8 +41,8 @@ class AgentWorkbenchTests(unittest.TestCase):
             calls.append(("pipeline", query, chat_history))
             return {"answer": "pipeline answer", "debug": {}}
 
-        def langgraph_runner(query, chat_history=None):
-            calls.append(("langgraph", query, chat_history))
+        def langgraph_runner(query, chat_history=None, allow_demo_catalog=False):
+            calls.append(("langgraph", query, chat_history, allow_demo_catalog))
             return {"answer": "langgraph answer", "debug": {}}
 
         result = run_selected_agent(
@@ -54,7 +54,7 @@ class AgentWorkbenchTests(unittest.TestCase):
         )
 
         self.assertEqual(result["answer"], "langgraph answer")
-        self.assertEqual(calls, [("langgraph", "问题", [])])
+        self.assertEqual(calls, [("langgraph", "问题", [], True)])
 
     def test_build_status_summary_extracts_debug_fields(self):
         summary = build_status_summary(

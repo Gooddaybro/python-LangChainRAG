@@ -101,7 +101,10 @@ class PythonChatRequest(BaseModel):
     user_context: UserContext = Field(default_factory=UserContext, description="来自 Java 的只读用户画像上下文。")
     candidates: list[ProductCandidate] = Field(default_factory=list, description="Java 为此轮对话过滤出的 SKU 候选列表。")
     demand_intent: DemandIntent | None = Field(default=None, description="Java 统一解析出的需求意图。")
-    debug: bool = Field(default=False, description="是否包含内部 LangGraph 调试数据。")
+    debug: bool = Field(
+        default=False,
+        description="是否请求内部 LangGraph 调试数据；仅当本地服务启用 DEBUG_RESPONSE_ENABLED=true 时才会返回，否则会被抑制。",
+    )
 
     @field_validator("request_id", "session_id", "query")
     @classmethod

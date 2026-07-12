@@ -221,6 +221,7 @@ def build_initial_state(
     user_context=None,
     candidates=None,
     demand_intent=None,
+    allow_demo_catalog=False,
 ):
     return {
         **build_run_state_defaults(),
@@ -233,6 +234,7 @@ def build_initial_state(
         "user_context": user_context or {},
         "candidates": candidates or [],
         "demand_intent": demand_intent or {},
+        "allow_demo_catalog": allow_demo_catalog,
         "trace_events": make_trace(
             "run_started",
             request_id=request_id,
@@ -270,6 +272,7 @@ def run_langgraph_agent(
     candidates=None,
     demand_intent=None,
     use_cached_graph=False,
+    allow_demo_catalog=False,
 ):
     """Run the LangGraph assistant and return the stable Agent response shape."""
     resolved_thread_id = resolve_thread_id(thread_id=thread_id, session_id=session_id)
@@ -295,6 +298,7 @@ def run_langgraph_agent(
         user_context=user_context,
         candidates=candidates,
         demand_intent=demand_intent,
+        allow_demo_catalog=allow_demo_catalog,
     )
     final_state = graph.invoke(
         initial_state,
