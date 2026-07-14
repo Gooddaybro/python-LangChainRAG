@@ -1,22 +1,24 @@
 # FastAPI 接口设计
 
-本文档定义当前项目的后端接口契约。生产调用方应优先接入 FastAPI；
-Streamlit 只作为本地调试台、演示页和学习 LangGraph trace 的辅助入口。
+本文档定义当前项目的后端接口契约。生产环境中，只有 Java 后端可以调用
+FastAPI；前端、App 和小程序必须调用 Java，不能直接调用 Python。Streamlit 只作为
+本地调试台、演示页和学习 LangGraph trace 的辅助入口。
 
 ## 1. API 目标
 
 `AI Clothing Shopping Assistant System` 面向服装电商导购场景，对外提供一个稳定的 HTTP JSON 接口：
 
 ```text
-Java / 前端 / App / 小程序
--> FastAPI /chat
+前端 / App / 小程序
+-> Java 后端（用户、会话与商业事实所有者）
+-> FastAPI /chat（Java internal call）
 -> LangGraph 工作流
 -> 结构化查询或 RAG
 -> 答案校验
 -> JSON 响应
 ```
 
-生产主入口是：
+Java 生产内部调用入口是：
 
 ```text
 POST /chat
@@ -65,16 +67,39 @@ Streamlit 调试页: http://127.0.0.1:8501
 Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8501
 ```
 
+### 2.1 本地 PostgreSQL checkpoint
+
+从工作区根目录启动本地依赖；该命令会启动专用的 LangGraph PostgreSQL，Java
+业务代码不访问该数据库：
+
+```bash
+sh scripts/start-local-deps.sh
+cd AI-Clothing-Shopping-Assistant-System
+# APP_INTERNAL_API_TOKEN must already be loaded from a private secret store.
+AI_RUNTIME_ENV=production \
+LANGGRAPH_CHECKPOINTER_BACKEND=postgres \
+LANGGRAPH_CHECKPOINTER_DSN='postgresql://...' \
+.venv/bin/python -m uvicorn clothing_assistant.api.app:app
+```
+
+`LANGGRAPH_CHECKPOINTER_DSN` 必须只在本地 `.env` 或 shell secret storage 中提供，
+不能提交真实密码。PostgreSQL checkpoint tables are LangGraph runtime metadata only.
+Java/MySQL still owns conversation messages, user identity, product facts, and transaction
+state. Request payload channels are untracked and must not appear in durable checkpoints.
+The checkpointer tables are created by `PostgresSaver.setup()` on Python startup.
+
 ## 3. 接口列表
 
 | 方法 | 路径 | 用途 | 是否生产使用 |
 | --- | --- | --- | --- |
 | `GET` | `/health` | 健康检查 | 是 |
-| `POST` | `/chat` | LangGraph 主线入口 | 是 |
-| `POST` | `/chat/langgraph` | LangGraph 兼容入口 | 过渡兼容 |
-| `POST` | `/chat/pipeline` | 旧手写 pipeline 对照 | 否 |
+| `POST` | `/chat` | LangGraph 主线入口 | 是（仅 Java 内部调用） |
+| `POST` | `/chat/stream` | LangGraph 真实 SSE 流式入口 | 是（仅 Java 内部调用） |
+| `POST` | `/chat/langgraph` | LangGraph 兼容入口 | 过渡兼容（仅 Java 内部调用） |
+| `POST` | `/chat/pipeline` | 旧手写 pipeline 对照 | 否（仅 Java 内部调用） |
 
-生产系统和 Java 调用方应使用 `/chat`。`/chat/pipeline` 只用于迁移期对照、回归检查和学习。
+生产系统由 Java 调用 `/chat`；前端、App 和小程序不得直接调用 Python。
+`/chat/pipeline` 只用于迁移期对照、回归检查和学习。
 
 ## 4. 请求结构
 
@@ -83,7 +108,23 @@ Endpoint:
 ```text
 POST /chat
 Content-Type: application/json
+X-Internal-Token: <shared Java/Python internal token>
 ```
+
+`X-Internal-Token` 是唯一接受的 Python internal authentication header。认证在
+`AI_RUNTIME_ENV=production` 或配置了 `APP_INTERNAL_API_TOKEN` 时启用；生产启动时
+该环境变量不能为空。不要记录、回显或在客户端代码中硬编码该 token。
+
+### 4.1 请求体大小边界
+
+Python 对 `/chat`、`/chat/stream`、`/chat/pipeline` 和 `/chat/langgraph` 的声明
+`Content-Length` 设置上限。`MAX_CHAT_REQUEST_BYTES` 默认值为 `262144`（256 KiB），
+且配置值不能小于 `1024`。超过上限时，Python 在执行认证、验证和聊天处理前返回固定
+的 `413` 安全错误；不会回显请求体或 `Content-Length` 值。缺失或格式错误的
+`Content-Length` 按普通请求继续处理。
+
+该检查仅拒绝过大的**声明**请求体，不负责用户级或分布式限流。Java/网关继续拥有用户
+身份、授权及用户级限流的实现和配置。
 
 Request body:
 
@@ -226,6 +267,36 @@ only a safe request id, method, path, and sanitized field errors.
 ```
 
 Debug 字段用于开发、测试、eval 和排查，不建议直接暴露给普通用户。
+
+### 5.3 真实 SSE 响应
+
+`POST /chat/stream` 使用与 `/chat` 相同的 LangGraph 路由、工具、validator、
+`product_refs` 和事实边界。模型生成路径直接消费 Kimi provider fragment；不再等待
+完整回答后人为切块。Python 保留 `STREAM_SAFETY_TAIL_CHARS` 个字符作为安全尾部，
+并在公开文本前执行与 `answer_validator` 相同的纯 RAG 交易事实检查。
+
+正常事件顺序保持 v1 契约：
+
+```text
+token* -> done
+```
+
+`done.answer` 必须等于所有 `token.content` 的精确拼接结果。结构化查询、Java 候选
+推荐、尺码规则、直接回答和 fallback 是确定性路径，可能只产生一个 `token` 事件。
+
+模型 timeout、429、连接错误或 5xx 只允许在尚未公开任何文本时进行有界重试。
+公开输出开始后不再重试，失败时以安全 `error` 结束且不发送 `done`。客户端断连后，
+Python 关闭 provider iterator、停止后续节点和重试，并且不再发送任何事件。
+
+Phase 2 运行参数：
+
+| 环境变量 | 默认值 | 约束 |
+| --- | ---: | --- |
+| `LLM_TIMEOUT_SECONDS` | `30` | 必须大于 0 |
+| `LLM_MAX_RETRIES` | `2` | `0..3` |
+| `LLM_MAX_CONCURRENCY` | `8` | 至少 1；仅为 Python 进程内模型并发保护 |
+| `RAG_TIMEOUT_SECONDS` | `20` | 必须大于 0 |
+| `STREAM_SAFETY_TAIL_CHARS` | `64` | 至少 32 |
 
 ## 6. 行为契约
 
@@ -372,6 +443,20 @@ rag_retriever -> retrieval_grader
 
 该响应不暴露异常文本、堆栈、prompt 或内部路径；安全的 `request_id` 无法取得时为 `null`。
 
+### 7.3 请求体过大
+
+当受保护聊天路径的声明 `Content-Length` 超过 `MAX_CHAT_REQUEST_BYTES` 时，返回：
+
+```json
+{
+  "error": "request_too_large",
+  "message": "python assistant request exceeds the configured size limit"
+}
+```
+
+该 `413` 响应不改变 v1 正常 JSON 或 SSE 的字段；也不包含原始请求体、请求头值或
+用户级限流状态。
+
 ## 8. API 测试
 
 ### 8.1 Swagger 文档页
@@ -427,9 +512,10 @@ python -m unittest tests.test_langgraph_production_nodes -v
 python -m unittest discover -v
 ```
 
-## 9. Java 调用示例
+## 9. Java 内部调用示例
 
-Java 调用方只需要发送 HTTP POST JSON。下面是 Java 11+ `HttpClient` 示例：
+Java 服务使用受控配置中的 `app.internal-api.token` 调用 Python。前端、App 和小程序
+不能使用这个接口直接请求 Python。下面是 Java 11+ `HttpClient` 示例：
 
 ```java
 import java.net.URI;
@@ -468,6 +554,7 @@ public class ClothingAssistantClient {
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("http://127.0.0.1:8000/chat"))
             .header("Content-Type", "application/json; charset=utf-8")
+            .header("X-Internal-Token", internalApiToken)
             .POST(HttpRequest.BodyPublishers.ofString(body))
             .build();
 
@@ -487,26 +574,34 @@ public class ClothingAssistantClient {
 - `/chat` already uses LangGraph main workflow.
 - `thread_id` is passed to LangGraph checkpointer/debug config.
 - `chat_history` is still explicitly passed by the caller.
+- Development and tests use an in-memory checkpointer; production requires the
+  dedicated PostgreSQL checkpointer configuration described above.
 - Debug payloads are returned only when both `debug=true` and `DEBUG_RESPONSE_ENABLED=true`.
 - Java `candidates` are the production source for price, inventory, SKU, color, and size facts.
 - `product_catalog.json` is only an explicit `allow_demo_catalog=True` demo/test fixture.
+- `/chat/stream` uses model-time provider fragments with a safety tail and the same
+  deterministic fact validator as `/chat`.
+- Model retries are bounded and never occur after public output begins; recoverable RAG
+  failures become classified empty evidence and use the existing safe fallback.
 
 生产部署前：
 
-- Add authentication or internal gateway protection.
+- Set the same non-empty `APP_INTERNAL_API_TOKEN` secret for Python and Java's
+  `app.internal-api.token`; Python rejects missing or invalid internal tokens.
 - Add request id and access logs.
-- Add timeout and retry policy for model calls.
-- Replace local `InMemorySaver` with database checkpointer.
 - Decide whether `thread_id` should fully own conversation memory.
 - Preserve the safe `500` response shape without exception text.
-- Add rate limiting and request size limits.
+- Java/gateway owns user-level distributed rate limiting; Python only rejects oversized
+  declared chat request bodies using `MAX_CHAT_REQUEST_BYTES`.
 - Add Docker/deployment instructions.
 
 ## 11. 当前限制
 
 - This is not yet a multi-tenant API.
-- There is no authentication.
-- There is no production database checkpointer.
+- Python chat endpoints require `X-Internal-Token` whenever production mode or
+  `APP_INTERNAL_API_TOKEN` enables internal authentication.
+- Production PostgreSQL checkpoint tables contain only LangGraph runtime metadata,
+  not Java-owned conversation or commerce state.
 - `chat_history` still needs to be provided for reliable follow-up behavior.
 - Debug payloads require both `debug=true` and `DEBUG_RESPONSE_ENABLED=true` and are intended for development only.
 - `product_catalog.json` is an explicit `allow_demo_catalog=True` demo/test fixture; Java `candidates` remain the production commerce fact source.

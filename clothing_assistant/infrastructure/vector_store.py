@@ -11,9 +11,9 @@ from clothing_assistant.config_data import (
     DEFAULT_TEST_QUERY,
     DEFAULT_TOP_K,
     EMBEDDING_MODEL_NAME,
-    JINA_EMBEDDING_TIMEOUT_SECONDS,
     JINA_EMBEDDING_URL,
     VECTOR_DB_DIR,
+    get_rag_timeout_seconds,
 )
 from clothing_assistant.infrastructure.knowledge_base import build_knowledge_chunks, load_knowledge_files
 
@@ -44,7 +44,7 @@ class JinaEmbeddings:
                 "embedding_type": "float",
                 "task": task,
             },
-            timeout=JINA_EMBEDDING_TIMEOUT_SECONDS,
+            timeout=get_rag_timeout_seconds(),
         )
         response.raise_for_status()
         data = response.json().get("data")

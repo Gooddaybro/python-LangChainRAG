@@ -1,8 +1,11 @@
+import os
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from clothing_assistant import config_data
 from clothing_assistant.api.app import app
 from clothing_assistant.api.schemas import PythonChatRequest
 
@@ -11,11 +14,172 @@ class ApiTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app, raise_server_exceptions=False)
 
+    def test_lifespan_initializes_and_closes_runtime_checkpointer(self):
+        with (
+            patch(
+                "clothing_assistant.api.app.initialize_runtime_checkpointer",
+                create=True,
+            ) as initialize_runtime_checkpointer,
+            patch(
+                "clothing_assistant.api.app.close_runtime_checkpointer",
+                create=True,
+            ) as close_runtime_checkpointer,
+        ):
+            with TestClient(app, raise_server_exceptions=False) as client:
+                initialize_runtime_checkpointer.assert_called_once_with()
+                self.assertEqual(client.get("/health").status_code, 200)
+                close_runtime_checkpointer.assert_not_called()
+
+            close_runtime_checkpointer.assert_called_once_with()
+
     def test_health_returns_ok(self):
         response = self.client.get("/health")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_internal_auth_config_trims_configured_token(self):
+        with patch.dict(
+            os.environ,
+            {"AI_RUNTIME_ENV": "development", "APP_INTERNAL_API_TOKEN": " test-internal-token "},
+        ):
+            self.assertEqual(config_data.get_internal_api_token(), "test-internal-token")
+            self.assertTrue(config_data.is_internal_auth_required())
+
+    def test_max_chat_request_bytes_uses_safe_default_and_rejects_invalid_values(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(config_data.get_max_chat_request_bytes(), 262144)
+
+        with patch.dict(os.environ, {"MAX_CHAT_REQUEST_BYTES": "1024"}):
+            self.assertEqual(config_data.get_max_chat_request_bytes(), 1024)
+
+        for invalid_value, expected_message in (
+            ("not-a-number", "MAX_CHAT_REQUEST_BYTES must be an integer"),
+            ("1023", "MAX_CHAT_REQUEST_BYTES must be at least 1024"),
+        ):
+            with self.subTest(value=invalid_value), patch.dict(
+                os.environ,
+                {"MAX_CHAT_REQUEST_BYTES": invalid_value},
+            ):
+                with self.assertRaisesRegex(RuntimeError, expected_message):
+                    config_data.get_max_chat_request_bytes()
+
+    def test_env_example_documents_blank_internal_api_token_for_production(self):
+        env_example_path = Path(__file__).resolve().parents[1] / ".env.example"
+        env_example = env_example_path.read_text(encoding="utf-8")
+
+        self.assertIn("private .env or secret store", env_example)
+        self.assertRegex(env_example, r"(?m)^APP_INTERNAL_API_TOKEN=$")
+        self.assertRegex(env_example, r"(?m)^MAX_CHAT_REQUEST_BYTES=262144$")
+
+    def test_chat_requires_internal_token_when_production_auth_is_enabled(self):
+        fake_result = {
+            "answer": "fake answer",
+            "debug": {"intent_result": {"intent": "chat"}},
+        }
+        valid_request = {
+            "request_id": "req-internal-auth",
+            "session_id": "session-internal-auth",
+            "query": "你是谁？",
+        }
+
+        with (
+            patch.dict(
+                os.environ,
+                {"AI_RUNTIME_ENV": "production", "APP_INTERNAL_API_TOKEN": "test-internal-token"},
+            ),
+            patch("clothing_assistant.api.app.run_langgraph_agent", return_value=fake_result),
+        ):
+            response = self.client.post("/chat", json=valid_request)
+
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(
+                response.json(),
+                {
+                    "error": "internal_auth_required",
+                    "message": "python assistant internal authentication failed",
+                },
+            )
+
+            response = self.client.post(
+                "/chat",
+                headers={"X-Internal-Token": "test-internal-token"},
+                json=valid_request,
+            )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_chat_stream_requires_internal_token_when_production_auth_is_enabled(self):
+        valid_request = {
+            "request_id": "req-internal-auth-stream",
+            "session_id": "session-internal-auth-stream",
+            "query": "你是谁？",
+        }
+
+        with patch.dict(
+            os.environ,
+            {"AI_RUNTIME_ENV": "production", "APP_INTERNAL_API_TOKEN": "test-internal-token"},
+        ):
+            response = self.client.post("/chat/stream", json=valid_request)
+            health_response = self.client.get("/health")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": "internal_auth_required",
+                "message": "python assistant internal authentication failed",
+            },
+        )
+        self.assertEqual(health_response.status_code, 200)
+
+    def test_legacy_chat_routes_require_internal_token_when_production_auth_is_enabled(self):
+        with patch.dict(
+            os.environ,
+            {"AI_RUNTIME_ENV": "production", "APP_INTERNAL_API_TOKEN": "test-internal-token"},
+        ):
+            pipeline_response = self.client.post("/chat/pipeline", json={"query": "你是谁？"})
+            langgraph_response = self.client.post("/chat/langgraph", json={"query": "你是谁？"})
+
+        for response in (pipeline_response, langgraph_response):
+            with self.subTest(path=response.request.url.path):
+                self.assertEqual(response.status_code, 401)
+                self.assertEqual(
+                    response.json(),
+                    {
+                        "error": "internal_auth_required",
+                        "message": "python assistant internal authentication failed",
+                    },
+                )
+
+    def test_lifespan_rejects_production_without_internal_token(self):
+        with (
+            patch.dict(
+                os.environ,
+                {"AI_RUNTIME_ENV": "production", "APP_INTERNAL_API_TOKEN": ""},
+            ),
+            patch("clothing_assistant.api.app.initialize_runtime_checkpointer") as initialize,
+            patch("clothing_assistant.api.app.close_runtime_checkpointer") as close,
+            self.assertRaisesRegex(RuntimeError, "APP_INTERNAL_API_TOKEN is required in production"),
+        ):
+            with TestClient(app, raise_server_exceptions=False):
+                pass
+
+        initialize.assert_called_once_with()
+        close.assert_called_once_with()
+
+    def test_lifespan_rejects_invalid_phase_two_runtime_configuration(self):
+        with (
+            patch.dict(os.environ, {"LLM_MAX_RETRIES": "4"}, clear=True),
+            patch("clothing_assistant.api.app.initialize_runtime_checkpointer") as initialize,
+            patch("clothing_assistant.api.app.close_runtime_checkpointer") as close,
+            self.assertRaisesRegex(RuntimeError, "LLM_MAX_RETRIES"),
+        ):
+            with TestClient(app, raise_server_exceptions=False):
+                pass
+
+        initialize.assert_called_once_with()
+        close.assert_called_once_with()
 
     def test_rag_health_returns_vector_store_status(self):
         status = {
@@ -33,6 +197,209 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), status)
+
+    def test_chat_rejects_declared_request_larger_than_limit(self):
+        fake_result = {
+            "answer": "fake answer",
+            "debug": {"intent_result": {"intent": "chat"}},
+        }
+
+        with (
+            patch(
+                "clothing_assistant.api.app.get_max_chat_request_bytes",
+                return_value=64,
+                create=True,
+            ),
+            patch("clothing_assistant.api.app.run_langgraph_agent", return_value=fake_result),
+        ):
+            response = self.client.post(
+                "/chat",
+                headers={"Content-Length": "65"},
+                json={
+                    "request_id": "req-request-too-large",
+                    "session_id": "session-request-too-large",
+                    "query": "你是谁？",
+                },
+            )
+
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": "request_too_large",
+                "message": "python assistant request exceeds the configured size limit",
+            },
+        )
+
+    def test_chat_allows_declared_request_within_limit(self):
+        fake_result = {
+            "answer": "fake answer",
+            "debug": {"intent_result": {"intent": "chat"}},
+        }
+        request = {
+            "request_id": "req-request-within-limit",
+            "session_id": "session-request-within-limit",
+            "query": "你是谁？",
+        }
+
+        with (
+            patch(
+                "clothing_assistant.api.app.get_max_chat_request_bytes",
+                return_value=64,
+                create=True,
+            ),
+            patch(
+                "clothing_assistant.api.app.run_langgraph_agent",
+                return_value=fake_result,
+            ) as run_langgraph_agent,
+        ):
+            response = self.client.post(
+                "/chat",
+                headers={"Content-Length": "63"},
+                json=request,
+            )
+            health_response = self.client.get("/health", headers={"Content-Length": "65"})
+
+        self.assertEqual(response.status_code, 200)
+        run_langgraph_agent.assert_called_once()
+        self.assertEqual(health_response.status_code, 200)
+
+    def test_chat_allows_missing_negative_or_malformed_content_length(self):
+        fake_result = {
+            "answer": "fake answer",
+            "debug": {"intent_result": {"intent": "chat"}},
+        }
+        request_body = {
+            "request_id": "req-invalid-content-length",
+            "session_id": "session-invalid-content-length",
+            "query": "你是谁？",
+        }
+
+        with (
+            patch(
+                "clothing_assistant.api.app.get_max_chat_request_bytes",
+                return_value=64,
+            ) as get_max_chat_request_bytes,
+            patch(
+                "clothing_assistant.api.app.run_langgraph_agent",
+                return_value=fake_result,
+            ) as run_langgraph_agent,
+        ):
+            missing_length_request = self.client.build_request(
+                "POST",
+                "/chat",
+                json=request_body,
+            )
+            del missing_length_request.headers["Content-Length"]
+
+            requests = (
+                self.client.send(missing_length_request),
+                self.client.post(
+                    "/chat",
+                    headers={"Content-Length": "-1"},
+                    json=request_body,
+                ),
+                self.client.post(
+                    "/chat",
+                    headers={"Content-Length": "not-a-number"},
+                    json=request_body,
+                ),
+            )
+
+        for response in requests:
+            with self.subTest(content_length=response.request.headers.get("Content-Length")):
+                self.assertEqual(response.status_code, 200)
+
+        get_max_chat_request_bytes.assert_not_called()
+        self.assertEqual(run_langgraph_agent.call_count, 3)
+
+    def test_chat_rejects_oversized_request_without_echoing_input_headers(self):
+        sensitive_request_id = "req-sensitive-request-id"
+        input_header_name = "X-Input-Header"
+        input_header_value = "input-header-secret"
+
+        with (
+            patch(
+                "clothing_assistant.api.app.get_max_chat_request_bytes",
+                return_value=64,
+            ),
+            patch("clothing_assistant.api.app.run_langgraph_agent") as run_langgraph_agent,
+        ):
+            response = self.client.post(
+                "/chat",
+                headers={"Content-Length": "65", input_header_name: input_header_value},
+                json={
+                    "request_id": sensitive_request_id,
+                    "session_id": "session-sensitive-request-id",
+                    "query": "你是谁？",
+                },
+            )
+
+        response_headers = "\n".join(
+            f"{name}: {value}" for name, value in response.headers.items()
+        ).lower()
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(
+            response.json(),
+            {
+                "error": "request_too_large",
+                "message": "python assistant request exceeds the configured size limit",
+            },
+        )
+        self.assertNotIn(input_header_name.lower(), response_headers)
+        self.assertNotIn(input_header_value, response_headers)
+        self.assertNotIn(sensitive_request_id, response_headers)
+        run_langgraph_agent.assert_not_called()
+
+    def test_all_chat_routes_reject_declared_request_larger_than_limit(self):
+        fake_result = {
+            "answer": "fake answer",
+            "debug": {"intent_result": {"intent": "chat"}},
+        }
+        chat_request = {
+            "request_id": "req-all-chat-routes",
+            "session_id": "session-all-chat-routes",
+            "query": "你是谁？",
+        }
+        legacy_request = {"query": "你是谁？"}
+        requests = (
+            ("/chat", chat_request),
+            ("/chat/stream", chat_request),
+            ("/chat/pipeline", legacy_request),
+            ("/chat/langgraph", legacy_request),
+        )
+
+        with (
+            patch(
+                "clothing_assistant.api.app.get_max_chat_request_bytes",
+                return_value=64,
+                create=True,
+            ),
+            patch("clothing_assistant.api.app.run_agent", return_value=fake_result) as run_agent,
+            patch(
+                "clothing_assistant.api.app.run_langgraph_agent",
+                return_value=fake_result,
+            ) as run_langgraph_agent,
+        ):
+            for path, body in requests:
+                with self.subTest(path=path):
+                    response = self.client.post(
+                        path,
+                        headers={"Content-Length": "65"},
+                        json=body,
+                    )
+
+                    self.assertEqual(response.status_code, 413)
+                    self.assertEqual(
+                        response.json(),
+                        {
+                            "error": "request_too_large",
+                            "message": "python assistant request exceeds the configured size limit",
+                        },
+                    )
+
+        run_agent.assert_not_called()
+        run_langgraph_agent.assert_not_called()
 
     # /chat 现在走 LangGraph 主工作流
     def test_chat_uses_java_contract_and_calls_langgraph_executor(self):

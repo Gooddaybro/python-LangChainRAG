@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import patch
 
+import httpx
+
 from clothing_assistant.tools.rag_tool import run_rag_tool, simplify_chunk
 
 
@@ -55,6 +57,48 @@ class RagToolTests(unittest.TestCase):
         self.assertEqual(result["retrieved_chunks"], [])
         self.assertEqual(result["source_count"], 0)
         self.assertEqual(result["rag_meta"], {})
+
+    def test_recoverable_rag_failures_degrade_with_safe_reason(self):
+        request = httpx.Request("POST", "https://example.test/embeddings")
+        cases = (
+            (httpx.ReadTimeout("private timeout", request=request), "timeout"),
+            (httpx.ConnectError("private connection", request=request), "connection_error"),
+            (
+                httpx.HTTPStatusError(
+                    "private rate limit",
+                    request=request,
+                    response=httpx.Response(429, request=request),
+                ),
+                "rate_limited",
+            ),
+            (
+                httpx.HTTPStatusError(
+                    "private upstream failure",
+                    request=request,
+                    response=httpx.Response(503, request=request),
+                ),
+                "upstream_5xx",
+            ),
+        )
+
+        for error, reason in cases:
+            with self.subTest(reason=reason), patch(
+                "clothing_assistant.tools.rag_tool.search_similar_chunks",
+                side_effect=error,
+            ):
+                result = run_rag_tool("通勤穿什么颜色？")
+
+            self.assertEqual(result["retrieved_chunks"], [])
+            self.assertEqual(result["source_count"], 0)
+            self.assertEqual(result["rag_meta"]["degraded_reason"], reason)
+
+    def test_rag_tool_does_not_swallow_programming_errors(self):
+        with patch(
+            "clothing_assistant.tools.rag_tool.search_similar_chunks",
+            side_effect=TypeError("programming error"),
+        ):
+            with self.assertRaisesRegex(TypeError, "programming error"):
+                run_rag_tool("通勤穿什么颜色？")
 
 
 if __name__ == "__main__":

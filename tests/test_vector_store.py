@@ -177,6 +177,21 @@ class JinaEmbeddingsTests(unittest.TestCase):
         self.assertEqual(embedding, [0.1, 0.2])
         self.assertEqual(post.call_args.kwargs["json"]["task"], "retrieval.query")
 
+    def test_embedding_request_uses_configured_rag_timeout(self):
+        client = self.get_embeddings_client()
+        response = Mock()
+        response.json.return_value = {"data": [{"index": 0, "embedding": [0.1]}]}
+        with patch(
+            "clothing_assistant.infrastructure.vector_store.get_rag_timeout_seconds",
+            return_value=7.25,
+            create=True,
+        ), patch("clothing_assistant.infrastructure.vector_store.httpx.post") as post:
+            post.return_value = response
+
+            client.embed_query("测试")
+
+        self.assertEqual(post.call_args.kwargs["timeout"], 7.25)
+
     def test_embedding_client_requires_jina_api_key(self):
         with patch.dict(os.environ, {}, clear=True):
             client_type = getattr(vector_store, "JinaEmbeddings", None)

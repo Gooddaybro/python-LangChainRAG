@@ -54,11 +54,11 @@
 - Produces: `DependencyError(dependency, reason, retryable)`.
 - Produces: `stream_chat_content(messages, *, model_factory=None, stop_requested=None, sleep=None) -> Iterator[str]`.
 
-- [ ] **Step 1: Add failing configuration tests**
+- [x] **Step 1: Add failing configuration tests**
 
 Add table-driven assertions for defaults, whitespace normalization, invalid numbers, retry range, positive timeout/concurrency, and minimum safety tail.
 
-- [ ] **Step 2: Run configuration tests and observe RED**
+- [x] **Step 2: Run configuration tests and observe RED**
 
 Run:
 
@@ -68,15 +68,15 @@ Run:
 
 Expected: imports for the five Phase 2 parsers fail.
 
-- [ ] **Step 3: Implement the minimal parsers**
+- [x] **Step 3: Implement the minimal parsers**
 
 Use shared private integer/float parsing helpers in `config_data.py`; raise `RuntimeError` naming the invalid environment variable. Do not read these values at import time.
 
-- [ ] **Step 4: Run configuration tests and observe GREEN**
+- [x] **Step 4: Run configuration tests and observe GREEN**
 
 Run the Step 2 command. Expected: all configuration tests pass.
 
-- [ ] **Step 5: Add failing LLM policy tests**
+- [x] **Step 5: Add failing LLM policy tests**
 
 Cover these behaviors with injected model factories and `sleep=lambda _: None`:
 
@@ -91,7 +91,7 @@ def test_chat_model_disables_sdk_retries_and_sets_timeout(): ...
 
 Fake chunks expose `.content`; fake failures expose `status_code` or inherit `TimeoutError`/`ConnectionError`.
 
-- [ ] **Step 6: Run LLM policy tests and observe RED**
+- [x] **Step 6: Run LLM policy tests and observe RED**
 
 Run:
 
@@ -101,11 +101,11 @@ Run:
 
 Expected: streaming interfaces and explicit timeout/retry settings do not exist.
 
-- [ ] **Step 7: Implement bounded streaming policy**
+- [x] **Step 7: Implement bounded streaming policy**
 
 Configure `ChatOpenAI(request_timeout=get_llm_timeout_seconds(), max_retries=0)`. Use one process-local `BoundedSemaphore`, classify timeout/connection/429/5xx as retryable, close iterators in `finally`, retry only before a fragment has been yielded, and raise `DependencyError` without embedding the provider message.
 
-- [ ] **Step 8: Run focused tests and observe GREEN**
+- [x] **Step 8: Run focused tests and observe GREEN**
 
 Run:
 
@@ -127,11 +127,11 @@ Expected: all tests pass without an API key or network.
 - Consumes: `get_rag_timeout_seconds()` and `DependencyError`.
 - Produces: unchanged `run_rag_tool()` result fields plus internal `rag_meta.degraded_reason` when an external dependency fails.
 
-- [ ] **Step 1: Add failing RAG timeout and classification tests**
+- [x] **Step 1: Add failing RAG timeout and classification tests**
 
 Assert `JinaEmbeddings._embed()` passes the configured timeout. Assert timeout, connection, 429, and 5xx failures return zero chunks with one of `timeout`, `connection_error`, `rate_limited`, or `upstream_5xx`; assert an unrelated programming error is not swallowed.
 
-- [ ] **Step 2: Run focused tests and observe RED**
+- [x] **Step 2: Run focused tests and observe RED**
 
 Run:
 
@@ -141,11 +141,11 @@ Run:
 
 Expected: timeout is still a fixed constant and recoverable failures escape `run_rag_tool()`.
 
-- [ ] **Step 3: Implement the minimal RAG boundary**
+- [x] **Step 3: Implement the minimal RAG boundary**
 
 Use the configuration parser at the `httpx.post()` call. Translate only known `httpx.TimeoutException`, `httpx.ConnectError`, and `httpx.HTTPStatusError` 429/5xx cases; return the existing empty-evidence shape with a safe reason enum. Keep malformed local data and programming errors visible to tests.
 
-- [ ] **Step 4: Run focused tests and observe GREEN**
+- [x] **Step 4: Run focused tests and observe GREEN**
 
 Run the Step 2 command. Expected: all vector/RAG tests pass.
 
@@ -160,19 +160,19 @@ Run the Step 2 command. Expected: all vector/RAG tests pass.
 - Produces: `SafeTokenBuffer(tail_chars: int, validator: Callable[[str], str | None])`.
 - Produces: `push(fragment: str) -> list[str]`, `finish() -> list[str]`, `text`, and `emitted_text`.
 
-- [ ] **Step 1: Add failing buffer tests**
+- [x] **Step 1: Add failing buffer tests**
 
 Prove empty chunks are ignored, arbitrary provider boundaries preserve text, the configured tail is withheld, and `库存 8 件` / `售价 99 元` / `SKU ABC 已上架` split across fragments raises before the offending buffered text is released.
 
-- [ ] **Step 2: Run buffer tests and observe RED**
+- [x] **Step 2: Run buffer tests and observe RED**
 
 Run the named `ChatStreamHelperTests` buffer tests. Expected: `SafeTokenBuffer` does not exist.
 
-- [ ] **Step 3: Implement the minimal buffer**
+- [x] **Step 3: Implement the minimal buffer**
 
 Accumulate full text for validation, hold only the configured suffix, and return newly safe text. Reuse `find_forbidden_rag_fact`; do not copy its regexes. `finish()` releases the remaining tail only after its caller has received final validator acceptance.
 
-- [ ] **Step 4: Run helper tests and observe GREEN**
+- [x] **Step 4: Run helper tests and observe GREEN**
 
 Run:
 
@@ -197,15 +197,15 @@ Expected: all SSE helper and buffer tests pass.
 - Produces: async `generate_chat_stream(chat_request, http_request)`.
 - Consumes: the existing `run_langgraph_agent` graph builder, validator, response builder, `SafeTokenBuffer`, and `stream_chat_content`.
 
-- [ ] **Step 1: Add a failing real-timing executor test**
+- [x] **Step 1: Add a failing real-timing executor test**
 
 Use a fake provider iterator blocked by a `threading.Event`. Assert the first internal token event is received before the fake iterator is allowed to complete. Do not use elapsed-time sleeps as the assertion.
 
-- [ ] **Step 2: Run the timing test and observe RED**
+- [x] **Step 2: Run the timing test and observe RED**
 
 Run the named test. Expected: `stream_langgraph_agent` does not exist.
 
-- [ ] **Step 3: Implement the internal streaming executor**
+- [x] **Step 3: Implement the internal streaming executor**
 
 Run the existing synchronous graph in one request-scoped daemon thread and communicate via `queue.Queue`. Inject an answer generator that builds the same prompt/messages as `generate_final_answer`, consumes `stream_chat_content`, and emits only buffer-approved text. After graph completion:
 
@@ -215,11 +215,11 @@ Run the existing synchronous graph in one request-scoped daemon thread and commu
 - If unsafe text is found after public output, stop with a safe validation error.
 - In generator `finally`, signal cancellation and join the worker so it cannot outlive the request.
 
-- [ ] **Step 4: Add failing cancellation and consistency tests**
+- [x] **Step 4: Add failing cancellation and consistency tests**
 
 Assert closing the internal iterator closes the fake provider iterator and prevents result/done. Assert deterministic `/chat` and streaming runs return equal accepted answer, intent, `product_refs`, and stop reason. Assert token concatenation equals final answer.
 
-- [ ] **Step 5: Run focused executor tests and observe RED**
+- [x] **Step 5: Run focused executor tests and observe RED**
 
 Run:
 
@@ -229,11 +229,11 @@ Run:
 
 Expected: timing passes after Step 3; cancellation/API consistency tests still fail.
 
-- [ ] **Step 6: Implement the async FastAPI bridge**
+- [x] **Step 6: Implement the async FastAPI bridge**
 
 Make `/chat/stream` accept the Starlette `Request`. Use an async generator that advances the internal iterator through `asyncio.to_thread`, checks `await request.is_disconnected()`, yields only formatted v1 events, and always closes the iterator. Map dependency reasons to fixed safe error codes/messages; never include `str(error)`.
 
-- [ ] **Step 7: Run focused streaming tests and observe GREEN**
+- [x] **Step 7: Run focused streaming tests and observe GREEN**
 
 Run the Step 5 command. Expected: all streaming and LangGraph tests pass.
 
@@ -244,21 +244,21 @@ Run the Step 5 command. Expected: all streaming and LangGraph tests pass.
 - Modify: `README.md`
 - Modify: `docs/api-design.md`
 - Modify: `docs/superpowers/plans/2026-07-14-langgraph-production-readiness-phase-2.md`
-- Create: `/Users/seekinward/.codex/visualizations/2026/07/14/019f610f-3090-7170-a5b9-74a4a80ead64/phase-2-architecture.html`
+- Produce: final Mermaid framework diagram in the development handoff.
 
 **Interfaces:**
 - Documents: the five Phase 2 settings, safe SSE behavior, disconnect behavior, retry boundary, and live Kimi smoke-test command.
 - Produces: a visual architecture showing Java ownership, FastAPI guards, one LangGraph, safe stream buffer, validator, Kimi, RAG, PostgreSQL checkpoints, cancellation, and SSE events.
 
-- [ ] **Step 1: Update templates and runtime documentation**
+- [x] **Step 1: Update templates and runtime documentation**
 
 Add only the exact defaults from the approved design. Explicitly state that retry never occurs after public output and that deterministic non-model answers may arrive as one token event.
 
-- [ ] **Step 2: Mark completed plan steps with evidence**
+- [x] **Step 2: Mark completed plan steps with evidence**
 
 Change each completed checkbox only after its named RED/GREEN command has run. Add a short verification-results section with command, date, and pass/fail count.
 
-- [ ] **Step 3: Run formatting and full Python verification**
+- [x] **Step 3: Run formatting and full Python verification**
 
 Run:
 
@@ -270,7 +270,7 @@ git diff --check
 
 Expected: zero diff whitespace errors, all tests pass, and Ruff reports no errors in changed Phase 2 files (legacy unrelated findings must be reported separately, never hidden).
 
-- [ ] **Step 4: Run cross-project contract verification**
+- [x] **Step 4: Run cross-project contract verification**
 
 Run:
 
@@ -282,13 +282,28 @@ cd ../.. && docker compose -f IntelligentOutfitRecommendationSystem/docker-compo
 
 Expected: environment tests, Java client tests, and Compose validation pass.
 
-- [ ] **Step 5: Review against both development documents**
+- [x] **Step 5: Review against both development documents**
 
 Check every Phase 2 acceptance row in the overall design and every section in the detailed design. Report any intentionally deferred Phase 3 work separately. Do not claim live PostgreSQL/Kimi verification unless it was actually run.
 
-- [ ] **Step 6: Generate and verify the framework diagram**
+- [x] **Step 6: Generate and verify the framework diagram**
 
-Use the `visualize` skill to create the requested interactive architecture diagram in the visualization workspace. Verify it renders and link it in the final handoff.
+Use the `visualize` skill's smallest-fit rule to provide a static Mermaid architecture diagram in the final handoff.
+
+## Verification Results — 2026-07-14
+
+| Check | Result |
+| --- | --- |
+| `git diff --check` | Passed; no whitespace errors |
+| `.venv/bin/ruff check clothing_assistant tests` | Passed; no lint errors |
+| `.venv/bin/python -m unittest discover -v` | Passed; 232 tests |
+| `python3 -m unittest tests.test_reproducible_environment -v` | Passed; 5 tests |
+| Java `RestPythonAssistantClientTests` | Passed |
+| Docker Compose config | Passed |
+
+Live Kimi and live PostgreSQL smoke tests were not run because the automated
+acceptance suite is secret-free and external-service-free. The official Kimi
+API documentation confirms OpenAI-compatible `stream=True` SSE support.
 
 ## Plan Self-Review
 

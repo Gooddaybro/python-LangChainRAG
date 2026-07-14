@@ -120,14 +120,19 @@ RAG 检索资料：
 """.strip()
 
 
+def build_answer_messages(final_prompt):
+    """Build the shared provider message list for sync and streaming generation."""
+    return [
+        SystemMessage(content="你是可靠的电商服装导购客服 Agent。"),
+        HumanMessage(content=final_prompt),
+    ]
+
+
 def generate_final_answer(user_query, intent_result, memory_result, tool_results):
     """调用真实聊天模型生成最终回答。测试里会用 fake answer_generator 替代它。"""
     final_prompt = build_final_prompt(user_query, intent_result, memory_result, tool_results)
     chat_model = get_chat_model()
-    messages = [
-        SystemMessage(content="你是可靠的电商服装导购客服 Agent。"),
-        HumanMessage(content=final_prompt),
-    ]
+    messages = build_answer_messages(final_prompt)
     response = chat_model.invoke(messages)
 
     return response.content, final_prompt
