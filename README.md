@@ -89,6 +89,44 @@ Java/Python 接口调整开发文档见 `docs/integration/java-python-chat-inter
 Java/Python 接口调试文档见 `docs/integration/java-python-chat-interface-debugging.md`。
 跨项目架构边界见 `docs/architecture/java-ai-clothing-mall-architecture.md`。
 
+### Safe model-time streaming
+
+`POST /chat/stream` consumes real Kimi provider fragments while the model is
+generating. Python retains a safety tail and applies the same deterministic
+commerce-fact rules used by the normal answer validator before releasing text.
+`done.answer` is always the exact concatenation of emitted token contents.
+
+Direct answers, Java-candidate answers, size rules, and fallback answers are
+deterministic and may be emitted as one token event. A provider call may retry
+only before public text is emitted. Client disconnect closes the request-scoped
+stream and prevents later graph work or a `done` event.
+
+Runtime defaults are `LLM_TIMEOUT_SECONDS=30`, `LLM_MAX_RETRIES=2`,
+`LLM_MAX_CONCURRENCY=8`, `RAG_TIMEOUT_SECONDS=20`, and
+`STREAM_SAFETY_TAIL_CHARS=64`.
+
+### Local PostgreSQL Checkpoints
+
+Development and tests use an in-memory checkpointer. To run the production
+checkpointer locally, execute the following from the workspace root. The DSN
+must use a password supplied through your local `.env` or shell, never a value
+committed to this repository:
+
+```bash
+sh scripts/start-local-deps.sh
+cd AI-Clothing-Shopping-Assistant-System
+AI_RUNTIME_ENV=production \
+LANGGRAPH_CHECKPOINTER_BACKEND=postgres \
+LANGGRAPH_CHECKPOINTER_DSN='postgresql://...' \
+.venv/bin/python -m uvicorn clothing_assistant.api.app:app
+```
+
+PostgreSQL checkpoint tables are LangGraph runtime metadata only. Java/MySQL
+continues to own conversation messages, user identity, product facts, and
+transaction state. Request payload channels are untracked and do not appear in
+durable checkpoints; `PostgresSaver.setup()` creates the checkpointer tables on
+Python startup.
+
 ## Agent Executors
 
 当前主线入口是 `clothing_assistant.agent.langgraph_executor.run_langgraph_agent`。

@@ -26,6 +26,94 @@ KIMI_BASE_URL = "https://api.moonshot.cn/v1"
 # Kimi K2.5 当前仅接受 temperature=1；较低随机度由证据校验而不是该参数保证。
 CHAT_TEMPERATURE = 1
 ENABLE_LLM_PREFERENCE_MAPPER = os.getenv("ENABLE_LLM_PREFERENCE_MAPPER", "false").lower() == "true"
+RUNTIME_ENVIRONMENT_ENV = "AI_RUNTIME_ENV"
+CHECKPOINTER_BACKEND_ENV = "LANGGRAPH_CHECKPOINTER_BACKEND"
+CHECKPOINTER_DSN_ENV = "LANGGRAPH_CHECKPOINTER_DSN"
+INTERNAL_API_TOKEN_ENV = "APP_INTERNAL_API_TOKEN"
+
+
+def _get_positive_float(name: str, default: str) -> float:
+    raw_value = os.getenv(name, default).strip()
+    try:
+        value = float(raw_value)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a number") from error
+    if value <= 0:
+        raise RuntimeError(f"{name} must be greater than zero")
+    return value
+
+
+def _get_int(name: str, default: str, *, minimum: int, maximum: int | None = None) -> int:
+    raw_value = os.getenv(name, default).strip()
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be an integer") from error
+    if value < minimum or maximum is not None and value > maximum:
+        expected = f"between {minimum} and {maximum}" if maximum is not None else f"at least {minimum}"
+        raise RuntimeError(f"{name} must be {expected}")
+    return value
+
+
+def get_llm_timeout_seconds() -> float:
+    return _get_positive_float("LLM_TIMEOUT_SECONDS", "30")
+
+
+def get_llm_max_retries() -> int:
+    return _get_int("LLM_MAX_RETRIES", "2", minimum=0, maximum=3)
+
+
+def get_llm_max_concurrency() -> int:
+    return _get_int("LLM_MAX_CONCURRENCY", "8", minimum=1)
+
+
+def get_rag_timeout_seconds() -> float:
+    return _get_positive_float("RAG_TIMEOUT_SECONDS", "20")
+
+
+def get_stream_safety_tail_chars() -> int:
+    return _get_int("STREAM_SAFETY_TAIL_CHARS", "64", minimum=32)
+
+
+def get_runtime_environment() -> str:
+    return os.getenv(RUNTIME_ENVIRONMENT_ENV, "development").strip().lower()
+
+
+def get_internal_api_token() -> str:
+    return os.getenv(INTERNAL_API_TOKEN_ENV, "").strip()
+
+
+def is_internal_auth_required() -> bool:
+    return get_runtime_environment() == "production" or bool(get_internal_api_token())
+
+
+def get_max_chat_request_bytes() -> int:
+    raw_value = os.getenv("MAX_CHAT_REQUEST_BYTES", "262144").strip()
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise RuntimeError("MAX_CHAT_REQUEST_BYTES must be an integer") from error
+    if value < 1024:
+        raise RuntimeError("MAX_CHAT_REQUEST_BYTES must be at least 1024")
+    return value
+
+
+def get_checkpointer_backend() -> str:
+    backend = os.getenv(CHECKPOINTER_BACKEND_ENV, "").strip().lower()
+    if not backend:
+        return "postgres" if get_runtime_environment() == "production" else "memory"
+    if backend not in {"memory", "postgres"}:
+        raise RuntimeError("LANGGRAPH_CHECKPOINTER_BACKEND must be memory or postgres")
+    if get_runtime_environment() == "production" and backend != "postgres":
+        raise RuntimeError("production requires LANGGRAPH_CHECKPOINTER_BACKEND=postgres")
+    return backend
+
+
+def get_checkpointer_dsn() -> str | None:
+    dsn = os.getenv(CHECKPOINTER_DSN_ENV, "").strip()
+    if get_checkpointer_backend() == "postgres" and not dsn:
+        raise RuntimeError("LANGGRAPH_CHECKPOINTER_DSN is required for postgres")
+    return dsn or None
 
 
 def is_debug_response_enabled() -> bool:

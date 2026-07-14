@@ -2,7 +2,50 @@
 
 import json
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Callable
+
+
+class UnsafeStreamContent(RuntimeError):
+    """Signal that buffered model text violates a deterministic fact rule."""
+
+
+class SafeTokenBuffer:
+    """Hold a suffix while releasing only cumulatively validated model text."""
+
+    def __init__(self, tail_chars: int, validator: Callable[[str], str | None]):
+        if tail_chars < 1:
+            raise ValueError("tail_chars must be positive")
+        self.tail_chars = tail_chars
+        self.validator = validator
+        self.text = ""
+        self.emitted_text = ""
+
+    def _validate(self) -> None:
+        if self.validator(self.text):
+            raise UnsafeStreamContent("stream content failed deterministic validation")
+
+    def push(self, fragment: str) -> list[str]:
+        if not fragment:
+            return []
+
+        self.text += fragment
+        self._validate()
+        safe_end = max(len(self.emitted_text), len(self.text) - self.tail_chars)
+        safe_text = self.text[len(self.emitted_text):safe_end]
+        if not safe_text:
+            return []
+
+        self.emitted_text += safe_text
+        return [safe_text]
+
+    def finish(self) -> list[str]:
+        self._validate()
+        remaining = self.text[len(self.emitted_text):]
+        if not remaining:
+            return []
+
+        self.emitted_text += remaining
+        return [remaining]
 
 
 def format_sse_event(event: str, data: dict[str, Any]) -> str:

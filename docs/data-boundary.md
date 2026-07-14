@@ -30,7 +30,7 @@
 | 商品知识文件 | `clothing_assistant/data/*.txt` | 颜色、洗涤、尺码、场景、材质、版型的解释性知识 | `rag_retriever` |
 | 向量库 | `clothing_assistant/chroma_db/` | 文本 chunk 的向量索引 | `rag_tool` |
 | 请求历史 | API 请求里的 `chat_history` | 当前追问需要的显式历史 | `context_resolver` |
-| LangGraph checkpoint | 当前为 `InMemorySaver` | 按 `thread_id` 保存图执行状态 | LangGraph runtime |
+| LangGraph checkpoint | development/test 为 `InMemorySaver`；production 为专用 PostgreSQL | 按 `thread_id` 保存 LangGraph 运行时元数据 | LangGraph runtime |
 | trace/debug | `trace_events` 和可选本地 JSONL | 节点路径、工具结果、证据摘要 | `trace_logger` |
 
 ## 3. 结构化数据边界
@@ -169,11 +169,26 @@ thread_id 用于 LangGraph checkpoint/debug
 }
 ```
 
+生产检查点边界：
+
+```text
+PostgreSQL checkpoint tables are LangGraph runtime metadata only. Java/MySQL still owns
+conversation messages, user identity, product facts, and transaction state. Request
+payload channels are untracked and must not appear in durable checkpoints. The
+checkpointer tables are created by PostgresSaver.setup() on Python startup.
+```
+
+development/test 默认使用内存 checkpointer。需要本地验证 production PostgreSQL
+checkpointer 时，必须显式设置 `AI_RUNTIME_ENV=production`、
+`LANGGRAPH_CHECKPOINTER_BACKEND=postgres` 和私有的
+`LANGGRAPH_CHECKPOINTER_DSN`；Python 不把请求里的 `chat_history`、
+`user_context`、`candidates`、原始问题、prompt、工具结果或 trace 写入 durable
+checkpoint。
+
 后续生产化方向：
 
 - 让 `thread_id` 绑定短期对话 memory。
-- 使用数据库 checkpointer 替代 `InMemorySaver`。
-- 明确哪些 state 字段可以跨轮保留，哪些字段只属于单次请求。
+- 明确哪些不含请求内容的 state 字段可以跨轮保留。
 - 避免把完整用户隐私长期写入 trace 或日志。
 
 ## 6. Trace 和 Debug 边界

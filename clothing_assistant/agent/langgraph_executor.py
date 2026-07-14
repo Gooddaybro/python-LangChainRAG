@@ -4,20 +4,37 @@ This module owns graph assembly, compilation, checkpoint configuration, and
 runtime request metadata. Business node functions live in ``nodes.py``.
 """
 
+from dataclasses import dataclass
+from queue import Empty, Queue
+import threading
+from typing import Any
 from uuid import uuid4
 
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.channels import UntrackedValue
 from langgraph.graph import END, START, StateGraph
 
 from clothing_assistant.application.answer_service import (
+    build_answer_messages,
+    build_final_prompt,
     build_response_from_state,
     default_answer_generator,
 )
+from clothing_assistant.api.streaming import SafeTokenBuffer, UnsafeStreamContent
+from clothing_assistant.config_data import (
+    get_checkpointer_backend,
+    get_checkpointer_dsn,
+    get_stream_safety_tail_chars,
+)
+from clothing_assistant.infrastructure.llm_client import DependencyError, stream_chat_content
+from clothing_assistant.infrastructure.checkpointer import create_checkpointer_runtime
 from clothing_assistant.agent.nodes import (
     answer_generator_node,
     answer_validator_node,
     direct_answer_node,
     fallback_answer_node,
+    find_forbidden_rag_fact,
+    has_candidate_backed_recommendation,
     missing_info_gate_node,
     policy_fallback_node,
     rag_retriever_node,
@@ -39,6 +56,42 @@ from clothing_assistant.agent.tool_registry import build_default_tool_registry
 
 
 _DEFAULT_LANGGRAPH_AGENT = None
+_RUNTIME_CHECKPOINTER = None
+
+
+@dataclass
+class AgentStreamEvent:
+    """Internal event translated to the stable Java-facing SSE contract."""
+
+    kind: str
+    content: str = ""
+    result: dict | None = None
+    code: str = ""
+
+
+class StreamCancelled(RuntimeError):
+    """Stop graph work after the request consumer disconnects."""
+
+
+def initialize_runtime_checkpointer() -> Any:
+    global _RUNTIME_CHECKPOINTER
+    if _RUNTIME_CHECKPOINTER is None:
+        _RUNTIME_CHECKPOINTER = create_checkpointer_runtime(
+            get_checkpointer_backend(),
+            get_checkpointer_dsn(),
+        )
+    return _RUNTIME_CHECKPOINTER.saver
+
+
+def get_runtime_checkpointer() -> Any:
+    return initialize_runtime_checkpointer()
+
+
+def close_runtime_checkpointer() -> None:
+    global _RUNTIME_CHECKPOINTER
+    if _RUNTIME_CHECKPOINTER is not None:
+        _RUNTIME_CHECKPOINTER.close()
+        _RUNTIME_CHECKPOINTER = None
 
 
 def generate_thread_id():
@@ -168,7 +221,12 @@ def build_langgraph_agent(
     graph.add_edge("tool_budget_exhausted", "trace_logger")
     graph.add_edge("trace_logger", END)
 
-    return graph.compile(checkpointer=checkpointer)
+    compiled_graph = graph.compile(checkpointer=checkpointer)
+    # LangGraph checkpoints the raw input under __start__ before it reaches
+    # AgentState's typed channels, so this channel must be untracked as well.
+    compiled_graph.channels[START] = UntrackedValue(AgentState)
+    compiled_graph.channels[START].key = START
+    return compiled_graph
 
 
 def get_default_langgraph_agent():
@@ -273,19 +331,24 @@ def run_langgraph_agent(
     demand_intent=None,
     use_cached_graph=False,
     allow_demo_catalog=False,
+    checkpointer=None,
 ):
     """Run the LangGraph assistant and return the stable Agent response shape."""
     resolved_thread_id = resolve_thread_id(thread_id=thread_id, session_id=session_id)
     run_id = generate_run_id()
 
-    if use_cached_graph and should_use_default_graph(tool_registry, answer_generator, max_tool_calls):
+    if (
+        use_cached_graph
+        and checkpointer is None
+        and should_use_default_graph(tool_registry, answer_generator, max_tool_calls)
+    ):
         graph = get_default_langgraph_agent()
     else:
         graph = build_langgraph_agent(
             tool_registry=tool_registry,
             answer_generator=answer_generator,
             max_tool_calls=max_tool_calls,
-            checkpointer=InMemorySaver(),
+            checkpointer=checkpointer or get_runtime_checkpointer(),
         )
 
     initial_state: AgentState = build_initial_state(
@@ -307,3 +370,126 @@ def run_langgraph_agent(
     trace_events = collect_current_run_traces(final_state.get("trace_events", []), run_id)
 
     return build_response_from_state(final_state, trace_events)
+
+
+def stream_langgraph_agent(
+    user_query,
+    chat_history=None,
+    tool_registry=None,
+    max_tool_calls=3,
+    thread_id=None,
+    request_id=None,
+    session_id=None,
+    user_context=None,
+    candidates=None,
+    demand_intent=None,
+    allow_demo_catalog=False,
+    checkpointer=None,
+    stop_requested=None,
+    stream_content=None,
+):
+    """Run the existing graph while emitting safe provider fragments."""
+    event_queue = Queue()
+    stop_event = threading.Event()
+    public_parts = []
+    stream_content = stream_content or stream_chat_content
+    external_stop = stop_requested or (lambda: False)
+
+    def should_stop():
+        return stop_event.is_set() or external_stop()
+
+    def streaming_answer_generator(state):
+        final_prompt = build_final_prompt(
+            state["user_query"],
+            state["intent_result"],
+            state["memory_result"],
+            state["tool_results"],
+        )
+        messages = build_answer_messages(final_prompt)
+        pure_rag = bool(state.get("accepted_chunks")) and not has_candidate_backed_recommendation(state)
+        validator = find_forbidden_rag_fact if pure_rag else lambda _: None
+        buffer = SafeTokenBuffer(get_stream_safety_tail_chars(), validator)
+        provider_stream = stream_content(messages, stop_requested=should_stop)
+
+        try:
+            for fragment in provider_stream:
+                if should_stop():
+                    raise StreamCancelled()
+                try:
+                    safe_fragments = buffer.push(fragment)
+                except UnsafeStreamContent:
+                    if public_parts:
+                        raise
+                    return buffer.text, final_prompt
+
+                for safe_fragment in safe_fragments:
+                    public_parts.append(safe_fragment)
+                    event_queue.put(AgentStreamEvent(kind="token", content=safe_fragment))
+        finally:
+            close = getattr(provider_stream, "close", None)
+            if close is not None:
+                close()
+
+        if should_stop():
+            raise StreamCancelled()
+        return buffer.text, final_prompt
+
+    def worker():
+        try:
+            result = run_langgraph_agent(
+                user_query,
+                chat_history=chat_history,
+                tool_registry=tool_registry,
+                answer_generator=streaming_answer_generator,
+                max_tool_calls=max_tool_calls,
+                thread_id=thread_id,
+                request_id=request_id,
+                session_id=session_id,
+                user_context=user_context,
+                candidates=candidates,
+                demand_intent=demand_intent,
+                allow_demo_catalog=allow_demo_catalog,
+                checkpointer=checkpointer,
+            )
+            if should_stop():
+                return
+
+            answer = result.get("answer", "")
+            public_text = "".join(public_parts)
+            if not answer.startswith(public_text):
+                event_queue.put(AgentStreamEvent(kind="error", code="validation_failed"))
+                return
+
+            remaining = answer[len(public_text):]
+            if remaining:
+                public_parts.append(remaining)
+                event_queue.put(AgentStreamEvent(kind="token", content=remaining))
+            event_queue.put(AgentStreamEvent(kind="result", result=result))
+        except StreamCancelled:
+            pass
+        except UnsafeStreamContent:
+            event_queue.put(AgentStreamEvent(kind="error", code="validation_failed"))
+        except DependencyError as error:
+            event_queue.put(AgentStreamEvent(kind="error", code=error.reason))
+        except Exception:
+            event_queue.put(AgentStreamEvent(kind="error", code="internal_error"))
+        finally:
+            event_queue.put(AgentStreamEvent(kind="_end"))
+
+    worker_thread = threading.Thread(target=worker, name="assistant-stream-worker")
+    worker_thread.start()
+    try:
+        while True:
+            try:
+                event = event_queue.get(timeout=0.1)
+            except Empty:
+                if should_stop():
+                    break
+                yield AgentStreamEvent(kind="heartbeat")
+                continue
+            if event.kind == "_end":
+                break
+            yield event
+    finally:
+        stop_event.set()
+        worker_thread.join()

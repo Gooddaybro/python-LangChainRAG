@@ -1,27 +1,94 @@
+import asyncio
+import hmac
 import logging
 import re
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from clothing_assistant.api.schemas import LegacyChatRequest, PythonChatRequest, PythonChatResponse, FeedbackRequest
-from clothing_assistant.api.streaming import build_error_event, iter_stream_events
+from clothing_assistant.api.streaming import (
+    build_error_event,
+    build_stream_done_payload,
+    format_sse_event,
+)
 from clothing_assistant.agent.agent_executor import run_agent
-from clothing_assistant.agent.langgraph_executor import run_langgraph_agent
-from clothing_assistant.config_data import PROJECT_API_TITLE, is_debug_response_enabled
+from clothing_assistant.agent.langgraph_executor import (
+    close_runtime_checkpointer,
+    initialize_runtime_checkpointer,
+    run_langgraph_agent,
+    stream_langgraph_agent,
+)
+from clothing_assistant.config_data import (
+    PROJECT_API_TITLE,
+    get_internal_api_token,
+    get_llm_max_concurrency,
+    get_llm_max_retries,
+    get_llm_timeout_seconds,
+    get_max_chat_request_bytes,
+    get_rag_timeout_seconds,
+    get_runtime_environment,
+    get_stream_safety_tail_chars,
+    is_debug_response_enabled,
+    is_internal_auth_required,
+)
 from clothing_assistant.infrastructure.vector_store import get_vector_store_status
 
 logger = logging.getLogger(__name__)
 INTERNAL_ERROR_MESSAGE = "AI service failed to process the request."
+INTERNAL_TOKEN_HEADER = "X-Internal-Token"
+INTERNAL_AUTH_ERROR = {
+    "error": "internal_auth_required",
+    "message": "python assistant internal authentication failed",
+}
+CHAT_REQUEST_PATHS = frozenset({"/chat", "/chat/stream", "/chat/pipeline", "/chat/langgraph"})
+REQUEST_TOO_LARGE_ERROR = {
+    "error": "request_too_large",
+    "message": "python assistant request exceeds the configured size limit",
+}
 SAFE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialize_runtime_checkpointer()
+    try:
+        get_llm_timeout_seconds()
+        get_llm_max_retries()
+        get_llm_max_concurrency()
+        get_rag_timeout_seconds()
+        get_stream_safety_tail_chars()
+        if get_runtime_environment() == "production" and not get_internal_api_token():
+            raise RuntimeError("APP_INTERNAL_API_TOKEN is required in production")
+        yield
+    finally:
+        close_runtime_checkpointer()
 
 
 app = FastAPI(
     title=PROJECT_API_TITLE,
     description="服装尺寸与商品问答助手的 API 入口。",
     version="0.2.0",
+    lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def reject_oversized_declared_chat_requests(request: Request, call_next):
+    if request.url.path in CHAT_REQUEST_PATHS:
+        raw_content_length = request.headers.get("Content-Length")
+        try:
+            content_length = int(raw_content_length) if raw_content_length is not None else None
+        except ValueError:
+            content_length = None
+
+        if content_length is not None and content_length >= 0:
+            if content_length > get_max_chat_request_bytes():
+                return JSONResponse(status_code=413, content=REQUEST_TOO_LARGE_ERROR)
+
+    return await call_next(request)
 
 
 async def extract_safe_request_id(request: Request) -> str | None:
@@ -40,6 +107,16 @@ async def extract_safe_request_id(request: Request) -> str | None:
     return request_id if SAFE_REQUEST_ID_PATTERN.fullmatch(request_id) else None
 
 
+async def require_internal_auth(request: Request):
+    if not is_internal_auth_required():
+        return
+
+    expected = get_internal_api_token()
+    supplied = request.headers.get(INTERNAL_TOKEN_HEADER, "")
+    if not expected or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail=INTERNAL_AUTH_ERROR)
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """全局异常处理器：捕获所有未被处理的系统内部异常，防止服务直接崩溃。
@@ -55,6 +132,14 @@ async def global_exception_handler(request: Request, exc: Exception):
             "message": INTERNAL_ERROR_MESSAGE,
         },
     )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_: Request, exc: HTTPException):
+    if exc.status_code == 401 and exc.detail == INTERNAL_AUTH_ERROR:
+        return JSONResponse(status_code=401, content=INTERNAL_AUTH_ERROR)
+
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
 
 
 from fastapi.exceptions import RequestValidationError
@@ -161,7 +246,11 @@ def rag_health():
 
 
 @app.post("/chat")
-async def chat(chat_request: PythonChatRequest, request: Request):
+async def chat(
+    chat_request: PythonChatRequest,
+    request: Request,
+    _: None = Depends(require_internal_auth),
+):
     """主聊天接口（阻塞式）：接收用户的提问，调用 LangGraph 主工作流进行处理。
 
     这个接口会等待模型完全生成结果后，一次性返回完整的对话 JSON 响应。
@@ -195,42 +284,83 @@ async def chat(chat_request: PythonChatRequest, request: Request):
     return build_contract_chat_response(result, chat_request.request_id, chat_request.debug)
 
 
-def generate_chat_stream(request: PythonChatRequest):
-    """流式生成器：运行 LangGraph 工作流，并将执行过程中的事件和打字机文本流
+_STREAM_END = object()
+STREAM_ERROR_MESSAGES = {
+    "timeout": ("dependency_timeout", "AI dependency timed out."),
+    "rate_limited": ("dependency_unavailable", "AI dependency is temporarily unavailable."),
+    "connection_error": ("dependency_unavailable", "AI dependency is temporarily unavailable."),
+    "upstream_5xx": ("dependency_unavailable", "AI dependency is temporarily unavailable."),
+    "upstream_4xx": ("dependency_rejected", "AI dependency rejected the request."),
+    "invalid_response": ("dependency_invalid_response", "AI dependency returned an invalid response."),
+    "validation_failed": ("unsafe_model_output", "AI output failed safety validation."),
+    "internal_error": ("internal_error", INTERNAL_ERROR_MESSAGE),
+}
 
-    转换为 Server-Sent Events (SSE) 格式，分块推送给 Java 后端。
-    """
+
+def _next_stream_event(events):
     try:
-        result = run_langgraph_agent(
-            request.query.strip(),
-            chat_history=request.chat_history_dicts(),
-            thread_id=request.thread_id or request.session_id,
-            request_id=request.request_id,
-            session_id=request.session_id,
-            user_context=request.user_context_dict(),
-            candidates=request.candidate_dicts(),
-            demand_intent=(
-                request.demand_intent.model_dump(exclude_none=True, exclude_unset=True)
-                if request.demand_intent
-                else None
-            ),
-        )
-    except Exception:
-        logger.exception("POST /chat/stream 接口发生未捕获异常")
-        yield build_error_event("internal_error", INTERNAL_ERROR_MESSAGE)
-        return
+        return next(events)
+    except StopIteration:
+        return _STREAM_END
 
-    yield from iter_stream_events(result, request.request_id)
+
+async def generate_chat_stream(chat_request: PythonChatRequest, http_request: Request):
+    """Translate internal graph events to v1 SSE with disconnect cancellation."""
+    events = stream_langgraph_agent(
+        chat_request.query.strip(),
+        chat_history=chat_request.chat_history_dicts(),
+        thread_id=chat_request.thread_id or chat_request.session_id,
+        request_id=chat_request.request_id,
+        session_id=chat_request.session_id,
+        user_context=chat_request.user_context_dict(),
+        candidates=chat_request.candidate_dicts(),
+        demand_intent=(
+            chat_request.demand_intent.model_dump(exclude_none=True, exclude_unset=True)
+            if chat_request.demand_intent
+            else None
+        ),
+    )
+    try:
+        while not await http_request.is_disconnected():
+            event = await asyncio.to_thread(_next_stream_event, events)
+            if event is _STREAM_END:
+                return
+            if event.kind == "heartbeat":
+                continue
+            if event.kind == "token":
+                yield format_sse_event("token", {"content": event.content})
+                continue
+            if event.kind == "result":
+                yield format_sse_event(
+                    "done",
+                    build_stream_done_payload(event.result or {}, chat_request.request_id),
+                )
+                return
+            if event.kind == "error":
+                code, message = STREAM_ERROR_MESSAGES.get(
+                    event.code,
+                    STREAM_ERROR_MESSAGES["internal_error"],
+                )
+                yield build_error_event(code, message)
+                return
+    finally:
+        close = getattr(events, "close", None)
+        if close is not None:
+            await asyncio.to_thread(close)
 
 
 @app.post("/chat/stream")
-def chat_stream(request: PythonChatRequest):
+async def chat_stream(
+    chat_request: PythonChatRequest,
+    request: Request,
+    _: None = Depends(require_internal_auth),
+):
     """流式聊天接口：前端和 Java 端用于获取“打字机效果”回复的主要接口。
 
     返回一个持续推送文本的 StreamingResponse，实现一边思考一边输出的功能。
     """
     return StreamingResponse(
-        generate_chat_stream(request),
+        generate_chat_stream(chat_request, request),
         media_type="text/event-stream;charset=utf-8",
         headers={
             "Cache-Control":"no-cache",
@@ -240,7 +370,7 @@ def chat_stream(request: PythonChatRequest):
 
 
 @app.post("/chat/pipeline")
-def chat_pipeline(request: LegacyChatRequest):
+def chat_pipeline(request: LegacyChatRequest, _: None = Depends(require_internal_auth)):
     """旧版聊天接口：保留了旧的手写 pipeline 逻辑，主要用于开发和测试阶段，
 
     方便开发者比对与验证新旧工作流（LangGraph与Pipeline）的差异。
@@ -250,7 +380,7 @@ def chat_pipeline(request: LegacyChatRequest):
 
 
 @app.post("/chat/langgraph")
-def chat_langgraph(request: LegacyChatRequest):
+def chat_langgraph(request: LegacyChatRequest, _: None = Depends(require_internal_auth)):
     result = run_langgraph_agent(
         request.query.strip(),
         chat_history=request.chat_history,
