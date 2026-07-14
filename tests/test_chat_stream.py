@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from unittest.mock import patch
 
@@ -86,7 +87,15 @@ def parse_sse_events(body: str) -> list[tuple[str, dict]]:
 
 class ChatStreamEndpointTests(unittest.TestCase):
     def setUp(self):
+        self.environment = patch.dict(
+            os.environ,
+            {"APP_AI_PYTHON_INTERNAL_TOKEN": "python-test-token"},
+            clear=False,
+        )
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
         self.client = TestClient(app, raise_server_exceptions=False)
+        self.client.headers.update({"X-Internal-Token": "python-test-token"})
 
     def test_chat_stream_calls_langgraph_and_returns_token_then_done(self):
         fake_result = {

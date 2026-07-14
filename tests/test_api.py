@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import patch
 
@@ -9,7 +10,15 @@ from clothing_assistant.api.schemas import PythonChatRequest
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
+        self.environment = patch.dict(
+            os.environ,
+            {"APP_AI_PYTHON_INTERNAL_TOKEN": "python-test-token"},
+            clear=False,
+        )
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
         self.client = TestClient(app, raise_server_exceptions=False)
+        self.client.headers.update({"X-Internal-Token": "python-test-token"})
 
     def test_health_returns_ok(self):
         response = self.client.get("/health")

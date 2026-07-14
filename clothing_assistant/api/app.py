@@ -1,11 +1,12 @@
 import logging
 import re
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from clothing_assistant.api.schemas import LegacyChatRequest, PythonChatRequest, PythonChatResponse, FeedbackRequest
+from clothing_assistant.api.internal_auth import require_internal_token
 from clothing_assistant.api.streaming import build_error_event, iter_stream_events
 from clothing_assistant.agent.agent_executor import run_agent
 from clothing_assistant.agent.langgraph_executor import run_langgraph_agent
@@ -161,7 +162,11 @@ def rag_health():
 
 
 @app.post("/chat")
-async def chat(chat_request: PythonChatRequest, request: Request):
+async def chat(
+    chat_request: PythonChatRequest,
+    request: Request,
+    _: None = Depends(require_internal_token),
+):
     """主聊天接口（阻塞式）：接收用户的提问，调用 LangGraph 主工作流进行处理。
 
     这个接口会等待模型完全生成结果后，一次性返回完整的对话 JSON 响应。
@@ -224,7 +229,10 @@ def generate_chat_stream(request: PythonChatRequest):
 
 
 @app.post("/chat/stream")
-def chat_stream(request: PythonChatRequest):
+def chat_stream(
+    request: PythonChatRequest,
+    _: None = Depends(require_internal_token),
+):
     """流式聊天接口：前端和 Java 端用于获取“打字机效果”回复的主要接口。
 
     返回一个持续推送文本的 StreamingResponse，实现一边思考一边输出的功能。
@@ -240,7 +248,10 @@ def chat_stream(request: PythonChatRequest):
 
 
 @app.post("/chat/pipeline")
-def chat_pipeline(request: LegacyChatRequest):
+def chat_pipeline(
+    request: LegacyChatRequest,
+    _: None = Depends(require_internal_token),
+):
     """旧版聊天接口：保留了旧的手写 pipeline 逻辑，主要用于开发和测试阶段，
 
     方便开发者比对与验证新旧工作流（LangGraph与Pipeline）的差异。
@@ -250,7 +261,10 @@ def chat_pipeline(request: LegacyChatRequest):
 
 
 @app.post("/chat/langgraph")
-def chat_langgraph(request: LegacyChatRequest):
+def chat_langgraph(
+    request: LegacyChatRequest,
+    _: None = Depends(require_internal_token),
+):
     result = run_langgraph_agent(
         request.query.strip(),
         chat_history=request.chat_history,
@@ -260,7 +274,10 @@ def chat_langgraph(request: LegacyChatRequest):
 
 
 @app.post("/chat/feedback")
-def receive_feedback(request: FeedbackRequest):
+def receive_feedback(
+    request: FeedbackRequest,
+    _: None = Depends(require_internal_token),
+):
     """反馈收集接口：接收 Java 层转发过来的用户“点赞/踩”反馈。
 
     通过记录日志落盘，用于后期对 AI 推荐的准确度进行评估和模型微调。
