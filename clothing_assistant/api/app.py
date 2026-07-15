@@ -8,7 +8,14 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from clothing_assistant.api.schemas import LegacyChatRequest, PythonChatRequest, PythonChatResponse, FeedbackRequest
+from clothing_assistant.api.schemas import (
+    FeedbackRequest,
+    LegacyChatRequest,
+    PythonChatRequest,
+    PythonChatResponse,
+    RagRebuildRequest,
+    RagRebuildResponse,
+)
 from clothing_assistant.api.streaming import (
     build_error_event,
     build_stream_done_payload,
@@ -34,7 +41,10 @@ from clothing_assistant.config_data import (
     is_debug_response_enabled,
     is_internal_auth_required,
 )
-from clothing_assistant.infrastructure.vector_store import get_vector_store_status
+from clothing_assistant.infrastructure.vector_store import (
+    get_vector_store_status,
+    rebuild_vector_store_from_local_knowledge,
+)
 
 logger = logging.getLogger(__name__)
 INTERNAL_ERROR_MESSAGE = "AI service failed to process the request."
@@ -243,6 +253,19 @@ def health():
 def rag_health():
     """Return RAG index readiness separately from service liveness."""
     return get_vector_store_status()
+
+
+@app.post("/internal/rag/rebuild", response_model=RagRebuildResponse)
+async def rebuild_rag_index(
+    rebuild_request: RagRebuildRequest,
+    _: None = Depends(require_internal_auth),
+):
+    """Rebuild the local global-knowledge index without blocking the event loop."""
+    result = await asyncio.to_thread(
+        rebuild_vector_store_from_local_knowledge,
+        task_id=rebuild_request.task_id,
+    )
+    return RagRebuildResponse.model_validate(result)
 
 
 @app.post("/chat")

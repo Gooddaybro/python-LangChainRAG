@@ -5,9 +5,29 @@
 并且 Java 开发者在构建 DTO 时会使用这些描述。
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class RagRebuildRequest(BaseModel):
+    """Internal request to rebuild the global local-knowledge index."""
+
+    task_id: str = Field(alias="taskId", min_length=1, max_length=64)
+    source: Literal["LOCAL_GLOBAL_KNOWLEDGE"]
+
+
+class RagRebuildResponse(BaseModel):
+    """Stable result returned to the Java AI-task worker."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: str = Field(alias="taskId")
+    index_version: str = Field(alias="indexVersion")
+    file_count: int = Field(alias="fileCount", ge=0)
+    chunk_count: int = Field(alias="chunkCount", ge=0)
+    content_digest: str = Field(alias="contentDigest")
+    replayed: bool
 
 
 class ChatHistoryItem(BaseModel):

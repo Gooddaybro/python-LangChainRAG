@@ -38,6 +38,114 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
 
+    def test_rag_rebuild_requires_internal_token(self):
+        with (
+            patch("clothing_assistant.api.app.is_internal_auth_required", return_value=True),
+            patch(
+                "clothing_assistant.api.app.get_internal_api_token",
+                return_value="test-internal-token",
+            ),
+        ):
+            response = self.client.post(
+                "/internal/rag/rebuild",
+                json={"taskId": "task-1", "source": "LOCAL_GLOBAL_KNOWLEDGE"},
+            )
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_rag_rebuild_returns_contract_response_for_valid_token(self):
+        rebuild_result = {
+            "task_id": "task-1",
+            "index_version": "index-v1",
+            "file_count": 2,
+            "chunk_count": 4,
+            "content_digest": "abc123",
+            "replayed": False,
+        }
+        with (
+            patch("clothing_assistant.api.app.is_internal_auth_required", return_value=True),
+            patch(
+                "clothing_assistant.api.app.get_internal_api_token",
+                return_value="test-internal-token",
+            ),
+            patch(
+                "clothing_assistant.api.app.rebuild_vector_store_from_local_knowledge",
+                return_value=rebuild_result,
+                create=True,
+            ) as rebuild,
+        ):
+            response = self.client.post(
+                "/internal/rag/rebuild",
+                headers={"X-Internal-Token": "test-internal-token"},
+                json={"taskId": "task-1", "source": "LOCAL_GLOBAL_KNOWLEDGE"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "taskId": "task-1",
+                "indexVersion": "index-v1",
+                "fileCount": 2,
+                "chunkCount": 4,
+                "contentDigest": "abc123",
+                "replayed": False,
+            },
+        )
+        rebuild.assert_called_once_with(task_id="task-1")
+
+    def test_rag_rebuild_rejects_unknown_source(self):
+        with patch("clothing_assistant.api.app.is_internal_auth_required", return_value=False):
+            response = self.client.post(
+                "/internal/rag/rebuild",
+                json={"taskId": "task-1", "source": "REMOTE_KNOWLEDGE"},
+            )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_rag_rebuild_reports_same_task_as_replayed(self):
+        result = {
+            "task_id": "task-1",
+            "index_version": "index-v1",
+            "file_count": 2,
+            "chunk_count": 4,
+            "content_digest": "abc123",
+            "replayed": True,
+        }
+        with (
+            patch("clothing_assistant.api.app.is_internal_auth_required", return_value=False),
+            patch(
+                "clothing_assistant.api.app.rebuild_vector_store_from_local_knowledge",
+                return_value=result,
+                create=True,
+            ),
+        ):
+            response = self.client.post(
+                "/internal/rag/rebuild",
+                json={"taskId": "task-1", "source": "LOCAL_GLOBAL_KNOWLEDGE"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["replayed"])
+
+    def test_rag_rebuild_hides_internal_failure_detail(self):
+        with (
+            patch("clothing_assistant.api.app.is_internal_auth_required", return_value=False),
+            patch(
+                "clothing_assistant.api.app.rebuild_vector_store_from_local_knowledge",
+                side_effect=OSError("secret disk path"),
+                create=True,
+            ),
+            patch("clothing_assistant.api.app.logger.exception"),
+        ):
+            response = self.client.post(
+                "/internal/rag/rebuild",
+                json={"taskId": "task-1", "source": "LOCAL_GLOBAL_KNOWLEDGE"},
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertNotIn("secret disk path", response.text)
+
     def test_internal_auth_config_trims_configured_token(self):
         with patch.dict(
             os.environ,
