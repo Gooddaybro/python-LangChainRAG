@@ -226,6 +226,7 @@ def _build_vector_store_status(ready, reason, meta=None):
         "chunk_count": meta.get("chunk_count", 0),
         "version": meta.get("version"),
         "built_at": meta.get("built_at"),
+        "source_task_id": meta.get("source_task_id"),
     }
 
 

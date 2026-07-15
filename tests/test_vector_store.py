@@ -123,6 +123,7 @@ class VectorStoreStatusTests(unittest.TestCase):
             "version": "test-version",
             "built_at": "2026-07-10T00:00:00+00:00",
             "chunk_count": 2,
+            "source_task_id": "task-health-check",
             "source_files": source_files,
         }
 
@@ -146,6 +147,7 @@ class VectorStoreStatusTests(unittest.TestCase):
                 "chunk_count": 2,
                 "version": "test-version",
                 "built_at": "2026-07-10T00:00:00+00:00",
+                "source_task_id": "task-health-check",
             },
         )
 
