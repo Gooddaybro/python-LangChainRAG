@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import shutil
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -22,6 +23,10 @@ _EMBEDDINGS_CACHE = None
 _VECTOR_DATA_CACHE = None
 VECTOR_STORE_FILE = VECTOR_DB_DIR / "simple_vector_store.json"
 VECTOR_STORE_META_FILE = VECTOR_DB_DIR / "vector_store_meta.json"
+VECTOR_STORE_POINTER_FILE = VECTOR_DB_DIR / "current.json"
+VECTOR_STORE_VERSIONS_DIR = VECTOR_DB_DIR / "versions"
+VERSION_VECTOR_FILE_NAME = "simple_vector_store.json"
+VERSION_META_FILE_NAME = "vector_store_meta.json"
 
 
 class JinaEmbeddings:
@@ -115,10 +120,11 @@ def load_vector_data():
     if _VECTOR_DATA_CACHE is not None:
         return _VECTOR_DATA_CACHE
 
-    if not VECTOR_STORE_FILE.exists():
+    vector_file, _ = resolve_current_vector_store_paths()
+    if not vector_file.exists():
         raise FileNotFoundError("向量库文件不存在，请先上传知识文件或运行 vector_stores.py 重建向量库。")
 
-    with VECTOR_STORE_FILE.open("r", encoding="utf-8") as file:
+    with vector_file.open("r", encoding="utf-8") as file:
         _VECTOR_DATA_CACHE = json.load(file)
 
     return _VECTOR_DATA_CACHE
@@ -158,23 +164,57 @@ def build_source_file_meta(knowledge_chunks):
     return source_files
 
 
-def build_vector_store_meta(knowledge_chunks):
+def build_content_digest(knowledge_chunks):
+    """Return a deterministic digest of the source identity and chunk content."""
+    digest_input = [
+        {
+            "chunk_id": chunk["chunk_id"],
+            "file_name": chunk["file_name"],
+            "content": chunk["content"],
+        }
+        for chunk in knowledge_chunks
+    ]
+    encoded = json.dumps(digest_input, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def build_vector_store_meta(knowledge_chunks, source_task_id=None, version=None):
     built_at = datetime.now(timezone.utc).isoformat()
     return {
-        "version": built_at,
+        "version": version or built_at,
         "source_files": build_source_file_meta(knowledge_chunks),
         "chunk_count": len(knowledge_chunks),
+        "content_digest": build_content_digest(knowledge_chunks),
+        "source_task_id": source_task_id,
         "embedding_provider": "jina",
         "embedding_model": EMBEDDING_MODEL_NAME,
         "built_at": built_at,
     }
 
 
+def resolve_current_vector_store_paths():
+    """Resolve the active version, falling back to the legacy fixed files."""
+    if not VECTOR_STORE_POINTER_FILE.exists():
+        return VECTOR_STORE_FILE, VECTOR_STORE_META_FILE
+
+    with VECTOR_STORE_POINTER_FILE.open("r", encoding="utf-8") as file:
+        pointer = json.load(file)
+    index_version = pointer.get("index_version") if isinstance(pointer, dict) else None
+    if not isinstance(index_version, str) or not index_version:
+        raise ValueError("vector store pointer has no index_version")
+    if Path(index_version).name != index_version:
+        raise ValueError("vector store pointer contains an invalid index_version")
+
+    version_dir = VECTOR_STORE_VERSIONS_DIR / index_version
+    return version_dir / VERSION_VECTOR_FILE_NAME, version_dir / VERSION_META_FILE_NAME
+
+
 def load_vector_store_meta():
-    if not VECTOR_STORE_META_FILE.exists():
+    _, meta_file = resolve_current_vector_store_paths()
+    if not meta_file.exists():
         return {}
 
-    with VECTOR_STORE_META_FILE.open("r", encoding="utf-8") as file:
+    with meta_file.open("r", encoding="utf-8") as file:
         return json.load(file)
 
 
@@ -199,10 +239,15 @@ def _source_hashes(source_files):
 
 def get_vector_store_status():
     """Return safe readiness metadata without exposing vectors or knowledge text."""
-    if not VECTOR_STORE_FILE.exists():
+    try:
+        vector_file, meta_file = resolve_current_vector_store_paths()
+    except (OSError, ValueError):
+        return _build_vector_store_status(False, "invalid_vector_store_meta")
+
+    if not vector_file.exists():
         return _build_vector_store_status(False, "missing_vector_store")
 
-    if not VECTOR_STORE_META_FILE.exists():
+    if not meta_file.exists():
         return _build_vector_store_status(False, "missing_vector_store_meta")
 
     try:
@@ -214,7 +259,7 @@ def get_vector_store_status():
         return _build_vector_store_status(False, "invalid_vector_store_meta")
 
     try:
-        with VECTOR_STORE_FILE.open("r", encoding="utf-8") as file:
+        with vector_file.open("r", encoding="utf-8") as file:
             records = json.load(file)
     except (OSError, ValueError):
         return _build_vector_store_status(False, "invalid_vector_store", meta)
@@ -297,6 +342,73 @@ def rebuild_vector_store(knowledge_chunks):
     return vector_records
 
 
+def _validate_version_files(vector_file, meta_file):
+    with Path(vector_file).open("r", encoding="utf-8") as file:
+        records = json.load(file)
+    with Path(meta_file).open("r", encoding="utf-8") as file:
+        meta = json.load(file)
+
+    if not isinstance(records, list) or not isinstance(meta, dict):
+        raise ValueError("staged vector store has an invalid shape")
+    if meta.get("chunk_count") != len(records):
+        raise ValueError("staged vector store chunk count does not match metadata")
+    if not meta.get("content_digest") or not meta.get("version"):
+        raise ValueError("staged vector store metadata is incomplete")
+    return records, meta
+
+
+def _build_rebuild_result(meta, replayed):
+    return {
+        "task_id": meta["source_task_id"],
+        "index_version": meta["version"],
+        "file_count": len(meta["source_files"]),
+        "chunk_count": meta["chunk_count"],
+        "content_digest": meta["content_digest"],
+        "replayed": replayed,
+    }
+
+
+def _rebuild_versioned_vector_store(knowledge_docs, knowledge_chunks, task_id):
+    global _VECTOR_DATA_CACHE
+
+    try:
+        current_vector_file, current_meta_file = resolve_current_vector_store_paths()
+        if current_vector_file.exists() and current_meta_file.exists():
+            _, current_meta = _validate_version_files(current_vector_file, current_meta_file)
+            if current_meta.get("source_task_id") == task_id:
+                return _build_rebuild_result(current_meta, replayed=True)
+    except (OSError, ValueError, KeyError):
+        pass
+
+    vector_records = build_vector_records_from_chunks(knowledge_chunks)
+    content_digest = build_content_digest(knowledge_chunks)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    index_version = f"{timestamp}-{content_digest[:12]}"
+    version_dir = VECTOR_STORE_VERSIONS_DIR / index_version
+    vector_file = version_dir / VERSION_VECTOR_FILE_NAME
+    meta_file = version_dir / VERSION_META_FILE_NAME
+    meta = build_vector_store_meta(
+        knowledge_chunks,
+        source_task_id=task_id,
+        version=index_version,
+    )
+
+    try:
+        write_json_atomically(vector_file, vector_records)
+        write_json_atomically(meta_file, meta)
+        validated_records, validated_meta = _validate_version_files(vector_file, meta_file)
+        write_json_atomically(
+            VECTOR_STORE_POINTER_FILE,
+            {"index_version": index_version},
+        )
+    except Exception:
+        shutil.rmtree(version_dir, ignore_errors=True)
+        raise
+
+    _VECTOR_DATA_CACHE = validated_records
+    return _build_rebuild_result(validated_meta, replayed=False)
+
+
 # 根据用户问题检索最相关的知识块，并把结果整理成更容易打印和后续使用的结构。
 def search_similar_chunks(query, top_k=DEFAULT_TOP_K, metadata_filter=None):
     vector_records = load_vector_data()
@@ -326,9 +438,15 @@ def search_similar_chunks(query, top_k=DEFAULT_TOP_K, metadata_filter=None):
 
 
 # 从本地知识文件直接完成“读取 -> 切块 -> 重建向量库”，方便上传页在文件变化时直接调用。
-def rebuild_vector_store_from_local_knowledge():
+def rebuild_vector_store_from_local_knowledge(task_id=None):
     knowledge_docs = load_knowledge_files()
     knowledge_chunks = build_knowledge_chunks(knowledge_docs)
+
+    if task_id is not None:
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("task_id must not be blank")
+        return _rebuild_versioned_vector_store(knowledge_docs, knowledge_chunks, task_id)
+
     vector_store = rebuild_vector_store(knowledge_chunks)
 
     return vector_store, knowledge_docs, knowledge_chunks

@@ -17,6 +17,16 @@ def temporary_vector_store_paths(temp_dir):
         vector_store,
         "VECTOR_STORE_META_FILE",
         temp_path / "meta.json",
+    ), patch.object(
+        vector_store,
+        "VECTOR_STORE_POINTER_FILE",
+        temp_path / "current.json",
+        create=True,
+    ), patch.object(
+        vector_store,
+        "VECTOR_STORE_VERSIONS_DIR",
+        temp_path / "versions",
+        create=True,
     ):
         yield
 
@@ -246,6 +256,74 @@ class AtomicJsonWriteTests(unittest.TestCase):
             self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"version": "old"})
             self.assertFalse(target.with_suffix(".json.tmp").exists())
 
+
+class VersionedVectorStoreRebuildTests(unittest.TestCase):
+    def setUp(self):
+        vector_store._VECTOR_DATA_CACHE = None
+
+    def tearDown(self):
+        vector_store._VECTOR_DATA_CACHE = None
+
+    def test_rebuild_records_source_task_id_and_replays_same_task(self):
+        knowledge_docs = [
+            {
+                "file_name": "guide.txt",
+                "file_path": "/missing/guide.txt",
+                "content": "通勤穿搭建议",
+            }
+        ]
+        chunks = build_knowledge_chunks(knowledge_docs)
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            temporary_vector_store_paths(temp_dir),
+            patch.object(vector_store, "load_knowledge_files", return_value=knowledge_docs),
+            patch.object(vector_store, "get_embeddings") as get_embeddings,
+        ):
+            get_embeddings.return_value.embed_documents.return_value = [[0.1, 0.2]]
+
+            first = vector_store.rebuild_vector_store_from_local_knowledge(task_id="task-1")
+            second = vector_store.rebuild_vector_store_from_local_knowledge(task_id="task-1")
+
+            self.assertFalse(first["replayed"])
+            self.assertTrue(second["replayed"])
+            self.assertEqual(first["index_version"], second["index_version"])
+            self.assertEqual(first["chunk_count"], len(chunks))
+            get_embeddings.return_value.embed_documents.assert_called_once()
+
+    def test_failed_staged_build_keeps_current_store(self):
+        knowledge_docs = [
+            {
+                "file_name": "guide.txt",
+                "file_path": "/missing/guide.txt",
+                "content": "通勤穿搭建议",
+            }
+        ]
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            temporary_vector_store_paths(temp_dir),
+            patch.object(vector_store, "load_knowledge_files", return_value=knowledge_docs),
+            patch.object(vector_store, "get_embeddings") as get_embeddings,
+        ):
+            get_embeddings.return_value.embed_documents.return_value = [[0.1, 0.2]]
+            vector_store.rebuild_vector_store_from_local_knowledge(task_id="task-1")
+            old_pointer = json.loads(
+                vector_store.VECTOR_STORE_POINTER_FILE.read_text(encoding="utf-8")
+            )
+
+            with patch.object(
+                vector_store,
+                "write_json_atomically",
+                side_effect=OSError("disk full"),
+            ):
+                with self.assertRaises(OSError):
+                    vector_store.rebuild_vector_store_from_local_knowledge(task_id="task-2")
+
+            self.assertEqual(
+                json.loads(vector_store.VECTOR_STORE_POINTER_FILE.read_text(encoding="utf-8")),
+                old_pointer,
+            )
 
 if __name__ == "__main__":
     unittest.main()
