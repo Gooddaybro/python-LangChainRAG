@@ -4,6 +4,7 @@ import unittest
 from clothing_assistant.agent.agent_executor import build_agent_query, build_final_prompt
 from clothing_assistant.agent.router import (
     INTENT_POLICY_QA,
+    INTENT_RECOMMENDATION,
     INTENT_SIZE_RECOMMENDATION,
     intent_router,
 )
@@ -24,6 +25,14 @@ class AgentMvpTests(unittest.TestCase):
             intent_router("我 175cm 70kg 穿什么码？")["intent"],
             INTENT_SIZE_RECOMMENDATION,
         )
+
+    def test_router_uses_java_demand_intent_for_short_gender_input(self):
+        result = intent_router(
+            "男性",
+            {"targetGender": "male", "hardFilters": ["targetGender"]},
+        )
+
+        self.assertEqual(result["intent"], INTENT_RECOMMENDATION)
 
     def test_memory_does_not_inject_empty_history_for_reference_words(self):
         memory_result = run_memory_tool("这件衣服适合夏天吗？", [])

@@ -187,7 +187,27 @@ def build_router_result(intent, query_type, need_history, reason):
     }
 
 
-def intent_router(user_query):
+def has_recommendation_demand(demand_intent):
+    """Return whether Java already supplied at least one validated shopping slot."""
+    if not isinstance(demand_intent, dict):
+        return False
+
+    return any(
+        demand_intent.get(key)
+        for key in (
+            "targetGender",
+            "target_gender",
+            "category",
+            "budgetMax",
+            "budget_max",
+            "scene",
+            "style",
+            "attributes",
+        )
+    )
+
+
+def intent_router(user_query, demand_intent=None):
     """规则版意图识别器：先保证稳定可解释，后续再考虑升级成模型 Router。"""
     normalized_query = normalize_query(user_query)
     need_history = needs_history(user_query)
@@ -246,6 +266,14 @@ def intent_router(user_query):
             "size",
             size_need_history,
             reason,
+        )
+
+    if has_recommendation_demand(demand_intent):
+        return build_router_result(
+            INTENT_RECOMMENDATION,
+            "recommendation",
+            need_history,
+            "Java 已提供经过校验的结构化导购需求。",
         )
 
     if contains_any(normalized_query, RECOMMENDATION_KEYWORDS):
