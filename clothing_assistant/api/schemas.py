@@ -24,9 +24,11 @@ class DemandIntentParseRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
+    schema_version: str = Field(alias="schemaVersion", pattern=r"^1\.0$")
     request_id: str = Field(alias="requestId", min_length=1, max_length=128)
     session_id: str = Field(alias="sessionId", min_length=1, max_length=128)
     current_message: str = Field(alias="currentMessage", min_length=1)
+    current_demand: dict[str, Any] = Field(alias="currentDemand")
     deterministic_patch: dict[str, Any] = Field(alias="deterministicPatch")
     locked_slots: list[str] = Field(alias="lockedSlots")
     matched_fragments: list[str] = Field(alias="matchedFragments")

@@ -29,9 +29,11 @@ class StubService:
 
 def request_body():
     return {
+        "schemaVersion": "1.0",
         "requestId": "req-1",
         "sessionId": "session-1",
         "currentMessage": "女性穿搭",
+        "currentDemand": {"targetGender": "FEMALE"},
         "deterministicPatch": {},
         "lockedSlots": [],
         "matchedFragments": [],
@@ -68,3 +70,14 @@ def test_internal_parse_endpoint_rejects_missing_token(monkeypatch):
 
     assert response.status_code == 401
     assert response.json()["error"] == "internal_auth_required"
+
+
+def test_internal_parse_endpoint_requires_schema_and_current_demand(monkeypatch):
+    monkeypatch.setattr(app_module, "is_internal_auth_required", lambda: False)
+    body = request_body()
+    body.pop("schemaVersion")
+    body.pop("currentDemand")
+
+    response = TestClient(app_module.app).post("/internal/demand-intent/parse", json=body)
+
+    assert response.status_code == 422
