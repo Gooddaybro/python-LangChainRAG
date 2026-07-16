@@ -9,6 +9,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from clothing_assistant.api.schemas import (
+    DemandIntentParseRequest,
     FeedbackRequest,
     LegacyChatRequest,
     PythonChatRequest,
@@ -16,6 +17,11 @@ from clothing_assistant.api.schemas import (
     RagRebuildRequest,
     RagRebuildResponse,
 )
+from clothing_assistant.application.demand_intent_parse_service import (
+    DemandIntentParseError,
+    DemandIntentParseService,
+)
+from clothing_assistant.domain.demand_intent_models import DemandIntentParseCandidate
 from clothing_assistant.api.streaming import (
     build_error_event,
     build_stream_done_payload,
@@ -125,6 +131,10 @@ async def require_internal_auth(request: Request):
     supplied = request.headers.get(INTERNAL_TOKEN_HEADER, "")
     if not expected or not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail=INTERNAL_AUTH_ERROR)
+
+
+def get_demand_intent_parse_service() -> DemandIntentParseService:
+    return DemandIntentParseService()
 
 
 @app.exception_handler(Exception)
@@ -247,6 +257,29 @@ def build_contract_chat_response(agent_result, request_id, include_debug):
 def health():
     """健康检查接口：用于 Kubernetes 等容器服务或负载均衡器检查当前 Python 服务是否正常存活。"""
     return {"status": "ok"}
+
+
+@app.post(
+    "/internal/demand-intent/parse",
+    response_model=DemandIntentParseCandidate,
+    response_model_by_alias=True,
+)
+def parse_demand_intent(
+    parse_request: DemandIntentParseRequest,
+    _: None = Depends(require_internal_auth),
+    service: DemandIntentParseService = Depends(get_demand_intent_parse_service),
+):
+    """Return an untrusted but strictly shaped LLM candidate for Java validation."""
+    try:
+        return service.parse(parse_request.service_dict())
+    except DemandIntentParseError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "demand_intent_parse_unavailable",
+                "message": "semantic demand parsing is temporarily unavailable",
+            },
+        ) from error
 
 
 @app.get("/health/rag")

@@ -72,6 +72,34 @@ def get_chat_model():
     )
 
 
+def get_demand_intent_model():
+    """Create a no-retry model with the parser's strict eight-second boundary."""
+    api_key = os.getenv("MOONSHOT_API_KEY")
+    if not api_key:
+        raise RuntimeError("MOONSHOT_API_KEY is required to parse demand intent.")
+    return ChatOpenAI(
+        model=CHAT_MODEL_NAME,
+        temperature=0,
+        api_key=api_key,
+        base_url=KIMI_BASE_URL,
+        request_timeout=8,
+        max_retries=0,
+    )
+
+
+def invoke_chat_content(messages, *, model_factory=None):
+    """Invoke the demand parser once and return textual model content."""
+    factory = model_factory or get_demand_intent_model
+    with _get_model_semaphore():
+        try:
+            content = getattr(factory().invoke(messages), "content", "")
+        except Exception as error:
+            raise classify_dependency_error(error) from None
+    if not isinstance(content, str) or not content:
+        raise DependencyError("llm", "invalid_response", False)
+    return content
+
+
 def stream_chat_content(
     messages,
     *,

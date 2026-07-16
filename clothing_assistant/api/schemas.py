@@ -10,6 +10,38 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+class DemandIntentParseHistoryItem(BaseModel):
+    """One complete recent turn supplied only as soft context."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    user_query: str = Field(alias="userQuery")
+    assistant_answer: str = Field(alias="assistantAnswer")
+
+
+class DemandIntentParseRequest(BaseModel):
+    """Internal Java-to-Python semantic patch request."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    request_id: str = Field(alias="requestId", min_length=1, max_length=128)
+    session_id: str = Field(alias="sessionId", min_length=1, max_length=128)
+    current_message: str = Field(alias="currentMessage", min_length=1)
+    deterministic_patch: dict[str, Any] = Field(alias="deterministicPatch")
+    locked_slots: list[str] = Field(alias="lockedSlots")
+    matched_fragments: list[str] = Field(alias="matchedFragments")
+    unresolved_text: str = Field(alias="unresolvedText")
+    recent_history: list[DemandIntentParseHistoryItem] = Field(
+        default_factory=list, alias="recentHistory", max_length=3
+    )
+    pending_clarification: dict[str, Any] | None = Field(
+        default=None, alias="pendingClarification"
+    )
+
+    def service_dict(self) -> dict[str, Any]:
+        return self.model_dump(by_alias=True, exclude_none=True)
+
+
 class RagRebuildRequest(BaseModel):
     """Internal request to rebuild the global local-knowledge index."""
 
