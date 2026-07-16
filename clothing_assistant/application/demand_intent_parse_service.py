@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from clothing_assistant.domain.demand_intent_models import DemandIntentParseCandidate
-from clothing_assistant.infrastructure.llm_client import invoke_chat_content
+from clothing_assistant.infrastructure.llm_client import DependencyError, invoke_chat_content
 
 
 SYSTEM_PROMPT = """You extract only shopping-demand slot changes from the current message.
@@ -17,6 +17,8 @@ Omit slots that the current turn does not change; never use an empty array to me
 Evidence must be an exact quotation with source CURRENT_MESSAGE or PENDING_CLARIFICATION.
 Recent ordinary history may help understand pronouns and context, but ordinary history must not be evidence.
 Never override lockedSlots. Ask one concise clarification when a hard condition is uncertain.
+CLARIFY must use empty slots, slotConfidence and evidence, and put any candidate in
+clarificationCandidateValue. MERGE must set needsClarification false and all clarification fields null.
 """
 
 
@@ -44,5 +46,11 @@ class DemandIntentParseService:
             if not isinstance(payload, dict):
                 raise ValueError("response root must be an object")
             return DemandIntentParseCandidate.model_validate(payload)
-        except (ValueError, TypeError, json.JSONDecodeError, ValidationError) as error:
+        except (
+            ValueError,
+            TypeError,
+            json.JSONDecodeError,
+            ValidationError,
+            DependencyError,
+        ) as error:
             raise DemandIntentParseError("invalid demand intent parse response") from error

@@ -8,6 +8,7 @@ from clothing_assistant.application.demand_intent_parse_service import (
     DemandIntentParseService,
 )
 from clothing_assistant.domain.demand_intent_models import DemandIntentParseCandidate
+from clothing_assistant.infrastructure.llm_client import DependencyError
 
 
 VALID_CANDIDATE = {
@@ -48,6 +49,47 @@ def test_candidate_requires_metadata_for_each_slot():
         DemandIntentParseCandidate.model_validate(payload)
 
 
+def test_candidate_accepts_clarify_with_empty_slots_and_candidate_value():
+    candidate = DemandIntentParseCandidate.model_validate(
+        {
+            "schemaVersion": "1.0",
+            "action": "CLARIFY",
+            "slots": {},
+            "slotConfidence": {},
+            "evidence": {},
+            "needsClarification": True,
+            "clarificationSlot": "targetGender",
+            "clarificationCandidateValue": "FEMALE",
+            "clarificationQuestion": "确认要筛选女士商品吗？",
+        }
+    )
+
+    assert candidate.clarification_candidate_value == "FEMALE"
+
+
+@pytest.mark.parametrize(
+    ("slots", "confidence", "evidence"),
+    [
+        (
+            {"targetGender": "ALIEN"},
+            {"targetGender": 0.99},
+            {"targetGender": [{"text": "外星", "source": "CURRENT_MESSAGE"}]},
+        ),
+        (
+            {"style": []},
+            {"style": 0.99},
+            {"style": [{"text": "风格", "source": "CURRENT_MESSAGE"}]},
+        ),
+    ],
+)
+def test_candidate_rejects_illegal_enum_and_empty_arrays(slots, confidence, evidence):
+    payload = dict(VALID_CANDIDATE)
+    payload.update(slots=slots, slotConfidence=confidence, evidence=evidence)
+
+    with pytest.raises(ValidationError):
+        DemandIntentParseCandidate.model_validate(payload)
+
+
 def test_service_parses_plain_json_and_mentions_history_evidence_rule():
     captured = {}
 
@@ -66,11 +108,22 @@ def test_service_parses_plain_json_and_mentions_history_evidence_rule():
     assert result.slots.target_gender == "FEMALE"
     assert "ordinary history" in captured["messages"][0]["content"]
     assert "must not be evidence" in captured["messages"][0]["content"]
+    assert "CLARIFY must use empty slots" in captured["messages"][0]["content"]
 
 
 @pytest.mark.parametrize("content", ["```json\n{}\n```", "not-json"])
 def test_service_rejects_non_plain_json(content):
     with pytest.raises(DemandIntentParseError):
         DemandIntentParseService(invoke=lambda _: content).parse(
+            {"currentMessage": "女性穿搭", "recentHistory": [], "lockedSlots": []}
+        )
+
+
+def test_service_normalizes_upstream_dependency_failure():
+    def fail(_):
+        raise DependencyError("llm", "timeout", True)
+
+    with pytest.raises(DemandIntentParseError):
+        DemandIntentParseService(invoke=fail).parse(
             {"currentMessage": "女性穿搭", "recentHistory": [], "lockedSlots": []}
         )

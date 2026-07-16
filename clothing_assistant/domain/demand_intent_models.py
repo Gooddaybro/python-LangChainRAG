@@ -1,7 +1,7 @@
 """Strict domain contract for LLM-proposed demand intent patches."""
 
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -16,6 +16,49 @@ class EvidenceSource(StrEnum):
     PENDING_CLARIFICATION = "PENDING_CLARIFICATION"
 
 
+class TargetGender(StrEnum):
+    MALE = "MALE"
+    FEMALE = "FEMALE"
+    UNISEX = "UNISEX"
+
+
+class Category(StrEnum):
+    OUTERWEAR = "OUTERWEAR"
+    SKIRT = "SKIRT"
+    SHORTS = "SHORTS"
+    SHIRT = "SHIRT"
+    TOP = "TOP"
+    PANTS = "PANTS"
+
+
+class Scene(StrEnum):
+    COMMUTE = "COMMUTE"
+    DATE = "DATE"
+    CAMPUS = "CAMPUS"
+    DAILY = "DAILY"
+    TRAVEL = "TRAVEL"
+    SPORT = "SPORT"
+
+
+class Style(StrEnum):
+    MATURE = "MATURE"
+    RUGGED = "RUGGED"
+    MINIMAL = "MINIMAL"
+    CASUAL = "CASUAL"
+
+
+class Attribute(StrEnum):
+    TALLER = "TALLER"
+    SLIMMING = "SLIMMING"
+    COVERING = "COVERING"
+    HIGH_WAIST = "HIGH_WAIST"
+    DRAPED = "DRAPED"
+    STRUCTURED = "STRUCTURED"
+    WARM = "WARM"
+    THICK = "THICK"
+    AFFORDABLE = "AFFORDABLE"
+
+
 class SlotEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -26,12 +69,12 @@ class SlotEvidence(BaseModel):
 class DemandIntentSlots(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    target_gender: str | None = Field(default=None, alias="targetGender")
-    category: str | None = None
-    scene: list[str] | None = None
-    style: list[str] | None = None
+    target_gender: TargetGender | None = Field(default=None, alias="targetGender")
+    category: Category | None = None
+    scene: Annotated[list[Scene], Field(min_length=1)] | None = None
+    style: Annotated[list[Style], Field(min_length=1)] | None = None
     budget_max: int | None = Field(default=None, alias="budgetMax", ge=0)
-    attributes: list[str] | None = None
+    attributes: Annotated[list[Attribute], Field(min_length=1)] | None = None
 
     def present_aliases(self) -> set[str]:
         return {
@@ -51,6 +94,9 @@ class DemandIntentParseCandidate(BaseModel):
     evidence: dict[str, list[SlotEvidence]]
     needs_clarification: bool = Field(alias="needsClarification")
     clarification_slot: str | None = Field(default=None, alias="clarificationSlot")
+    clarification_candidate_value: str | int | None = Field(
+        default=None, alias="clarificationCandidateValue"
+    )
     clarification_question: str | None = Field(default=None, alias="clarificationQuestion")
 
     @model_validator(mode="after")
@@ -68,15 +114,47 @@ class DemandIntentParseCandidate(BaseModel):
                 raise ValueError("CLARIFY requires needsClarification")
             if not self.clarification_slot or not self.clarification_question:
                 raise ValueError("CLARIFY requires one slot and one question")
-            if self.clarification_slot not in slots:
-                raise ValueError("clarification slot must be present in slots")
+            if slots or self.slot_confidence or self.evidence:
+                raise ValueError("CLARIFY cannot contain merge slots")
+            if len(self.clarification_question) > 200:
+                raise ValueError("clarification question is too long")
+            self._validate_clarification_candidate()
         elif (
             self.needs_clarification
             or self.clarification_slot is not None
+            or self.clarification_candidate_value is not None
             or self.clarification_question is not None
         ):
             raise ValueError("MERGE cannot contain clarification state")
+        elif not slots:
+            raise ValueError("MERGE requires at least one slot")
         return self
+
+    def _validate_clarification_candidate(self) -> None:
+        slot: Literal[
+            "targetGender", "category", "scene", "style", "budgetMax", "attributes"
+        ] | str = self.clarification_slot or ""
+        value = self.clarification_candidate_value
+        if value is None:
+            return
+        validators = {
+            "targetGender": TargetGender,
+            "category": Category,
+            "scene": Scene,
+            "style": Style,
+            "attributes": Attribute,
+        }
+        if slot == "budgetMax":
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError("budgetMax clarification candidate must be non-negative integer")
+            return
+        enum_type = validators.get(slot)
+        if enum_type is None:
+            raise ValueError("unsupported clarification slot")
+        try:
+            enum_type(value)
+        except ValueError as error:
+            raise ValueError("illegal clarification candidate enum") from error
 
     def to_api_dict(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, exclude_none=True)
