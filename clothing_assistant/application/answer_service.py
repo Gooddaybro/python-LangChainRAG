@@ -8,6 +8,123 @@ from clothing_assistant.application.recommendation_service import build_product_
 from clothing_assistant.infrastructure.llm_client import get_chat_model
 
 
+GENDER_LABELS = {"male": "男性", "female": "女性"}
+SEASON_LABELS = {
+    "spring": "春季",
+    "summer": "夏季",
+    "autumn": "秋季",
+    "winter": "冬季",
+    "all_season": "四季",
+}
+STYLE_LABELS = {"casual": "休闲", "minimal": "简约", "formal": "正式"}
+FIT_LABELS = {"relaxed": "略宽松", "regular": "合身", "slim": "修身"}
+
+
+def is_outfit_advice(intent_result, demand_intent=None):
+    request_type = (demand_intent or {}).get("requestType") or (intent_result or {}).get("request_type")
+    return str(request_type or "").strip().upper() == "OUTFIT_ADVICE"
+
+
+def format_measurement(value):
+    if not isinstance(value, (int, float)):
+        return None
+    return f"{value:g}"
+
+
+def build_outfit_advice_draft(state):
+    """Compose an inventory-safe outfit answer in the documented fixed order."""
+    intent_result = state.get("intent_result") or {}
+    demand_intent = state.get("demand_intent") or {}
+    if not is_outfit_advice(intent_result, demand_intent):
+        return None
+
+    measurements = demand_intent.get("subjectMeasurements") or demand_intent.get("subject_measurements") or {}
+    confirmation = []
+    gender = str(demand_intent.get("targetGender") or "").lower()
+    season = str(demand_intent.get("season") or "").lower()
+    styles = demand_intent.get("style") or []
+    fits = demand_intent.get("fitPreferences") or demand_intent.get("fit_preferences") or []
+    height = format_measurement(measurements.get("heightCm") or measurements.get("height_cm"))
+    weight = format_measurement(measurements.get("weightKg") or measurements.get("weight_kg"))
+
+    if gender in GENDER_LABELS:
+        confirmation.append(GENDER_LABELS[gender])
+    if height:
+        confirmation.append(f"{height}cm")
+    if weight:
+        confirmation.append(f"{weight}kg")
+    if season in SEASON_LABELS:
+        confirmation.append(SEASON_LABELS[season])
+    confirmation.extend(STYLE_LABELS.get(str(value).lower(), str(value)) for value in styles if value)
+    confirmation.extend(FIT_LABELS.get(str(value).lower(), str(value)) for value in fits if value)
+
+    normalized_notice = ""
+    if str(measurements.get("normalizedFrom") or measurements.get("normalized_from") or "").upper() == "ASSUMED_JIN" and weight:
+        weight_jin = format_measurement(float(weight) * 2)
+        normalized_notice = f"（原文体重 {weight_jin}斤，已按斤换算为 {weight}kg）"
+
+    relaxed = "relaxed" in {str(value).lower() for value in fits}
+    top_fit = "略宽松上衣" if relaxed else "合身上衣"
+    formula = f"{top_fit} + 直筒下装"
+    if season == "summer":
+        material_advice = "优先轻薄、透气材质；上衣不过长，宽松但避免过度肥大。"
+    elif season == "winter":
+        material_advice = "用保暖内层叠加有结构的外搭，下装保持直筒，避免整体过度臃肿。"
+    else:
+        material_advice = "上衣长度和松量保持利落，下装优先直筒版型，材质按实际温度调整。"
+    color_advice = "基础色上衣可搭卡其、深灰或藏青下装，全身控制在两到三种主色。"
+
+    rerank_result = build_product_rerank_result(
+        state.get("candidates") or [],
+        intent_result,
+        state.get("user_query") or "",
+        state.get("user_context") or {},
+        state.get("tool_results") or {},
+        demand_intent=demand_intent,
+    )
+    refs = rerank_result["product_refs"]
+    candidate_by_key = {
+        (candidate.get("spu_id"), candidate.get("sku_id")): candidate
+        for candidate in state.get("candidates") or []
+    }
+    product_lines = []
+    for ref in refs:
+        candidate = candidate_by_key.get((ref.get("spu_id"), ref.get("sku_id")))
+        if not candidate:
+            continue
+        name = candidate.get("name") or "候选商品"
+        price = candidate.get("sale_price")
+        price_text = f"（{price:g} 元）" if isinstance(price, (int, float)) else ""
+        reason = str(ref.get("reason") or "符合当前明确需求。")
+        if reason.startswith(f"{name}："):
+            reason = reason.removeprefix(f"{name}：")
+        product_lines.append(f"   - {name}{price_text}：{reason}")
+
+    if not product_lines:
+        product_lines.append("   当前没有可归因的强匹配商品；先按以上方法搭配，不补造商品。")
+
+    capabilities = demand_intent.get("requestedCapabilities") or intent_result.get("requested_capabilities") or []
+    size_line = []
+    if "SIZE_GUIDANCE" in capabilities:
+        size = ((state.get("tool_results") or {}).get("size_tool") or {}).get("recommended_size")
+        if size:
+            size_line.append(f"5. 尺码提示：当前规则建议优先参考 {size} 码，具体仍以商品尺码表为准。")
+
+    follow_up_number = 6 if size_line else 5
+    summary = "、".join(confirmation) if confirmation else "当前"
+    return "\n".join(
+        [
+            f"1. 需求确认：按{summary}的穿搭需求{normalized_notice}。",
+            f"2. 搭配公式：{formula}。",
+            f"3. 版型、材质与颜色：{material_advice}{color_advice}",
+            "4. 可购买商品：",
+            *product_lines,
+            *size_line,
+            f"{follow_up_number}. 可选追问：你更偏日常休闲，还是通勤利落？",
+        ]
+    )
+
+
 def format_rag_sources(chunks):
     """Build deterministic user-facing citations from accepted RAG chunks.
 
@@ -139,6 +256,9 @@ def generate_final_answer(user_query, intent_result, memory_result, tool_results
 
 
 def default_answer_generator(state):
+    outfit_answer = build_outfit_advice_draft(state)
+    if outfit_answer:
+        return outfit_answer, "outfit_advice deterministic draft"
     return generate_final_answer(
         state["user_query"],
         state["intent_result"],

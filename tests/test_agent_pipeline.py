@@ -79,6 +79,31 @@ def fake_answer_generator(state):
 
 
 class AgentPipelineTests(unittest.TestCase):
+    def test_outfit_advice_still_returns_plan_when_no_strong_product_matches(self):
+        registry = build_default_tool_registry(
+            rag_runner=fake_empty_rag_runner,
+            policy_runner=fake_policy_runner,
+            size_runner=fake_size_runner,
+        )
+        result = run_langgraph_agent(
+            "夏天怎么穿",
+            tool_registry=registry,
+            candidates=[],
+            demand_intent={
+                "version": "demand-intent-v2",
+                "requestType": "OUTFIT_ADVICE",
+                "requestedCapabilities": ["OUTFIT_PLAN", "PRODUCT_SELECTION"],
+                "season": "summer",
+                "fitPreferences": ["relaxed"],
+            },
+            thread_id="test-outfit-plan-without-products",
+        )
+
+        self.assertEqual(result["debug"]["stop_reason"], "final_answer")
+        self.assertEqual(result["product_refs"], [])
+        self.assertIn("搭配公式", result["answer"])
+        self.assertIn("当前没有可归因的强匹配商品", result["answer"])
+
     def test_make_trace_creates_trace_event(self):
         """make_trace 创建标准 trace 事件列表，供 mutate 函数返回。"""
         events = make_trace("route_intent", intent="chat")

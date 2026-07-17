@@ -16,7 +16,12 @@ from clothing_assistant.agent.agent_executor import (
     resolve_memory,
     route_intent,
 )
-from clothing_assistant.application.answer_service import append_rag_sources, default_answer_generator
+from clothing_assistant.application.answer_service import (
+    append_rag_sources,
+    build_outfit_advice_draft,
+    default_answer_generator,
+    is_outfit_advice,
+)
 from clothing_assistant.config_data import RAG_DISTANCE_THRESHOLD
 from clothing_assistant.agent.router import (
     INTENT_INVENTORY_CHECK,
@@ -811,12 +816,16 @@ def answer_generator_node(state, answer_generator=None):
     generation_attempts = state.get("generation_attempts", 0) + 1
     structured_result = state.get("structured_result") or {}
     structured_draft = build_structured_draft(structured_result)
+    outfit_draft = build_outfit_advice_draft(state)
     recommendation_draft = build_candidate_recommendation_draft(state)
     size_draft = build_size_recommendation_draft(state)
 
     if structured_draft:
         draft_answer = structured_draft
         final_prompt = "structured_lookup draft，不调用大模型。"
+    elif outfit_draft:
+        draft_answer = outfit_draft
+        final_prompt = "outfit_advice deterministic draft，不调用大模型。"
     elif recommendation_draft:
         draft_answer = recommendation_draft
         final_prompt = "java_candidate_recommendation draft，不调用大模型。"
@@ -910,7 +919,9 @@ def answer_validator_node(state):
             }
 
     if state.get("tool_results", {}).get("rag_tool") and not state.get("accepted_chunks"):
-        if candidate_backed_recommendation:
+        if candidate_backed_recommendation or is_outfit_advice(
+            state.get("intent_result"), state.get("demand_intent")
+        ):
             return {
                 "answer": state.get("draft_answer", ""),
                 "validation_result": validation_result,
@@ -1095,7 +1106,10 @@ def route_after_retrieval_grader(state):
     if status == "good":
         return "answer_generator"
 
-    if status in {"weak", "empty"} and has_candidate_backed_recommendation(state):
+    if status in {"weak", "empty"} and (
+        has_candidate_backed_recommendation(state)
+        or is_outfit_advice(state.get("intent_result"), state.get("demand_intent"))
+    ):
         return "answer_generator"
 
     if status in {"weak", "empty"}:
