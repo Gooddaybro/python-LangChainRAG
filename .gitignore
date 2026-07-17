@@ -4,6 +4,7 @@ __pycache__/
 .test_tmp/
 
 .venv/
+.env
 .idea/
 .vscode/
 
@@ -15,5 +16,5 @@ clothing_assistant/traces/
 clothing_assistant/knowledge_file_hashes.json
 
 # 正式设计文档需要进 Git；只忽略本地 agent 计划草稿。
-docs/superpowers/
+
 site/

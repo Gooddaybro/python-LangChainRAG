@@ -5,6 +5,9 @@ catalog price/stock are handled by structured nodes, while styling, care and
 product explanations still go through retrieval.
 """
 
+import re
+from typing import Any
+
 from clothing_assistant.agent.agent_executor import (
     apply_direct_answer_gate,
     apply_fallback_rag_tool,
@@ -13,14 +16,17 @@ from clothing_assistant.agent.agent_executor import (
     resolve_memory,
     route_intent,
 )
-from clothing_assistant.application.answer_service import default_answer_generator
+from clothing_assistant.application.answer_service import append_rag_sources, default_answer_generator
+from clothing_assistant.config_data import RAG_DISTANCE_THRESHOLD
 from clothing_assistant.agent.router import (
     INTENT_INVENTORY_CHECK,
     INTENT_POLICY_QA,
     INTENT_PRICE_CHECK,
+    INTENT_RECOMMENDATION,
     INTENT_SIZE_RECOMMENDATION,
 )
 from clothing_assistant.agent.state import make_trace
+from clothing_assistant.application.recommendation_service import build_product_refs
 from clothing_assistant.agent.tool_registry import (
     build_default_tool_registry,
     execute_tool_spec,
@@ -31,17 +37,58 @@ from clothing_assistant.tools.product_catalog import (
     extract_requested_color,
     extract_requested_size,
     find_matching_product,
+    infer_lookup_type,
+    normalize_text,
     run_structured_lookup,
 )
 from clothing_assistant.tools.size_tool import normalize_measurement_query
 
 
-RETRIEVAL_SCORE_THRESHOLD = 0.7
 RAG_ALLOWED_SOURCES = {
-    "recommendation": {"颜色选择.txt", "洗涤养护.txt", "尺码推荐.txt"},
-    "product": {"颜色选择.txt", "洗涤养护.txt", "尺码推荐.txt"},
-    "size": {"尺码推荐.txt", "颜色选择.txt"},
+    # 这些都是解释性知识；价格、库存和 SKU 仍只能由 Java/MySQL 的结构化查询回答。
+    "recommendation": {
+        "颜色选择.txt",
+        "洗涤养护.txt",
+        "尺码推荐.txt",
+        "场景穿搭.txt",
+        "材质知识.txt",
+        "版型知识.txt",
+    },
+    "product": {
+        "颜色选择.txt",
+        "洗涤养护.txt",
+        "尺码推荐.txt",
+        "场景穿搭.txt",
+        "材质知识.txt",
+        "版型知识.txt",
+    },
+    "size": {"尺码推荐.txt", "颜色选择.txt", "版型知识.txt"},
 }
+
+# RAG 只提供解释性知识；这些模式属于必须交给 Java/MySQL 证明的强业务事实。
+RAG_FORBIDDEN_FACT_PATTERNS = [
+    re.compile(r"\bSKU\b", re.IGNORECASE),
+    re.compile(r"库存\s*\d+"),
+    re.compile(r"\d+(?:\.\d+)?\s*元"),
+    re.compile(r"(?:有货|无货|已上架|已下架)"),
+]
+
+
+def find_forbidden_rag_fact(answer):
+    """Return the first commerce fact that a pure-RAG answer must not assert.
+
+    Args:
+        answer: Draft answer produced from accepted explanatory RAG evidence.
+
+    Returns:
+        The matched commerce phrase, or ``None`` when no prohibited fact appears.
+    """
+    for pattern in RAG_FORBIDDEN_FACT_PATTERNS:
+        match = pattern.search(answer or "")
+        if match:
+            return match.group(0)
+
+    return None
 
 
 def route_intent_node(state):
@@ -104,6 +151,211 @@ def build_missing_info_answer(missing_fields):
     return "请补充关键信息后我再帮你查询。"
 
 
+def candidate_value(candidate: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = candidate.get(key)
+        if value not in (None, ""):
+            return value
+
+    return None
+
+
+def candidate_product_terms(candidate: dict[str, Any]) -> list[tuple[str, int]]:
+    """Return product identity terms from Java candidates.
+
+    Product matching deliberately prefers IDs, codes, and names over broad
+    category words so Python does not answer precise price/stock questions from
+    a vague "T恤" match when Java sent multiple SKU candidates.
+    """
+    terms = []
+
+    for key in ["sku_id", "spu_id", "sku_code", "spu_code"]:
+        value = candidate.get(key)
+        if value not in (None, ""):
+            terms.append((str(value), 5))
+
+    name = candidate.get("name")
+    if name:
+        terms.append((str(name), 5))
+
+    for key in ["category", "category_name"]:
+        value = candidate.get(key)
+        if value:
+            terms.append((str(value), 1))
+
+    return terms
+
+
+def candidate_product_score(user_query: str, candidate: dict[str, Any]) -> int:
+    query = normalize_text(user_query)
+    score = 0
+
+    for term, weight in candidate_product_terms(candidate):
+        normalized_term = normalize_text(term)
+        if normalized_term and normalized_term in query:
+            score += weight
+
+    return score
+
+
+def find_matching_candidate_products(user_query: str, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    scored_candidates = [
+        (candidate_product_score(user_query, candidate), index, candidate)
+        for index, candidate in enumerate(candidates or [])
+    ]
+    scored_candidates = [item for item in scored_candidates if item[0] > 0]
+
+    if not scored_candidates:
+        return {"candidates": [], "confidence": 0.0, "ambiguous": False}
+
+    scored_candidates.sort(key=lambda item: (-item[0], item[1]))
+    best_score = scored_candidates[0][0]
+    matched_candidates = [candidate for score, _, candidate in scored_candidates if score == best_score]
+
+    # 同一 SPU 的多个 SKU 是正常的候选集合，不应因为颜色/尺码不同就标记为歧义。
+    matched_spu_ids = {
+        str(candidate.get("spu_id"))
+        for candidate in matched_candidates
+        if candidate.get("spu_id") is not None
+    }
+    ambiguous = len(matched_spu_ids) > 1
+
+    return {
+        "candidates": [] if ambiguous else matched_candidates,
+        "confidence": min(1.0, best_score / 5),
+        "ambiguous": ambiguous,
+    }
+
+
+def extract_requested_candidate_color(user_query: str, candidates: list[dict[str, Any]]) -> str | None:
+    candidate_colors = sorted(
+        {
+            str(candidate.get("color"))
+            for candidate in candidates or []
+            if candidate.get("color")
+        },
+        key=len,
+        reverse=True,
+    )
+    query = normalize_text(user_query)
+
+    for color in candidate_colors:
+        if normalize_text(color) in query:
+            return color
+
+    return extract_requested_color(user_query)
+
+
+def candidate_matches_color_and_size(candidate: dict[str, Any], color: str, size: str) -> bool:
+    return (
+        normalize_text(candidate.get("color")) == normalize_text(color)
+        and str(candidate.get("size", "")).strip().upper() == str(size).strip().upper()
+    )
+
+
+def candidate_stock_count(candidate: dict[str, Any]) -> int:
+    stock_value = candidate.get("available_stock")
+
+    if stock_value in (None, ""):
+        stock_status = normalize_text(candidate.get("stock_status"))
+        return 1 if stock_status in {"in_stock", "low_stock", "available", "on_sale"} else 0
+
+    try:
+        return int(float(stock_value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def build_candidate_base_result(lookup_type, match_result):
+    matched_candidates = match_result.get("candidates", [])
+    candidate = matched_candidates[0] if matched_candidates else {}
+    missing_fields = []
+
+    if match_result.get("ambiguous"):
+        missing_fields.append("product_ambiguous")
+    elif not matched_candidates:
+        missing_fields.append("product")
+
+    return {
+        "lookup_type": lookup_type,
+        "matched_product_id": candidate.get("spu_id"),
+        "matched_product_name": candidate.get("name"),
+        "sku": candidate_value(candidate, "sku_code", "sku_id"),
+        "category": candidate_value(candidate, "category", "category_name"),
+        "material": candidate_value(candidate, "material", "materials"),
+        "confidence": match_result.get("confidence", 0.0),
+        "missing_fields": missing_fields,
+    }
+
+
+def run_candidate_structured_lookup(user_query, intent_result=None, candidates=None):
+    """Resolve exact commerce facts from Java-provided SKU candidates."""
+    lookup_type = infer_lookup_type(user_query, intent_result)
+    match_result = find_matching_candidate_products(user_query, candidates or [])
+    matched_candidates = match_result.get("candidates", [])
+    result = build_candidate_base_result(lookup_type, match_result)
+
+    if not lookup_type:
+        result["reason"] = "当前问题不属于结构化价格或库存查询。"
+        return result
+
+    if not matched_candidates:
+        result["reason"] = "缺少可由 Java 候选商品唯一确认的商品。"
+        return result
+
+    result["available_colors"] = sorted(
+        {
+            str(candidate.get("color"))
+            for candidate in matched_candidates
+            if candidate.get("color")
+        }
+    )
+
+    if lookup_type == "price":
+        candidate = matched_candidates[0]
+        result["price_cny"] = candidate.get("sale_price")
+        result["reason"] = "价格来自 Java 候选商品。"
+        return result
+
+    requested_color = extract_requested_candidate_color(user_query, matched_candidates)
+    requested_size = extract_requested_size(user_query)
+    result["color"] = requested_color
+    result["size"] = requested_size
+
+    if not requested_color:
+        result["missing_fields"].append("color")
+
+    if not requested_size:
+        result["missing_fields"].append("size")
+
+    if not requested_color or not requested_size:
+        result["stock_count"] = None
+        result["in_stock"] = None
+        result["reason"] = "库存查询缺少颜色或尺码。"
+        return result
+
+    matched_stock_candidate = next(
+        (
+            candidate
+            for candidate in matched_candidates
+            if candidate_matches_color_and_size(candidate, requested_color, requested_size)
+        ),
+        None,
+    )
+
+    if matched_stock_candidate is None:
+        result["stock_count"] = 0
+        result["in_stock"] = False
+        result["reason"] = "Java 候选商品没有这个颜色尺码组合。"
+        return result
+
+    stock_count = candidate_stock_count(matched_stock_candidate)
+    result["stock_count"] = stock_count
+    result["in_stock"] = stock_count > 0
+    result["reason"] = "库存来自 Java 候选商品。"
+    return result
+
+
 def missing_info_gate_node(state):
     """生产图的缺信息门。
 
@@ -114,13 +366,42 @@ def missing_info_gate_node(state):
     missing_fields = []
 
     if intent in {INTENT_INVENTORY_CHECK, INTENT_PRICE_CHECK}:
-        match_result = find_matching_product(state["user_query"])
-        product = match_result.get("product")
+        candidates = state.get("candidates", [])
 
-        if not product or match_result.get("ambiguous"):
+        if not candidates and not state.get("allow_demo_catalog", False):
+            result = {
+                "missing_fields": ["authoritative_candidates"],
+                "can_continue": False,
+                "reason": "java_candidates_missing",
+            }
+            return {
+                "missing_info_result": result,
+                "answer": "当前无法读取商品实时数据，暂时不能核实价格或库存，请稍后重试。",
+                "final_prompt": "missing authoritative Java candidates; no local catalog lookup.",
+                "stop_reason": "missing_authoritative_candidates",
+                "trace_events": make_trace(
+                    "missing_info_gate",
+                    can_continue=False,
+                    missing_fields=result["missing_fields"],
+                    reason=result["reason"],
+                ),
+            }
+
+        if candidates:
+            match_result = find_matching_candidate_products(state["user_query"], candidates)
+            matched_candidates = match_result.get("candidates", [])
+            has_product = bool(matched_candidates) and not match_result.get("ambiguous")
+            has_color = bool(extract_requested_candidate_color(state["user_query"], matched_candidates))
+        else:
+            match_result = find_matching_product(state["user_query"])
+            product = match_result.get("product")
+            has_product = bool(product) and not match_result.get("ambiguous")
+            has_color = bool(extract_requested_color(state["user_query"], product)) if product else False
+
+        if not has_product:
             missing_fields.append("product")
         elif intent == INTENT_INVENTORY_CHECK:
-            if not extract_requested_color(state["user_query"], product):
+            if not has_color:
                 missing_fields.append("color")
             if not extract_requested_size(state["user_query"]):
                 missing_fields.append("size")
@@ -206,10 +487,20 @@ def summarize_result_for_trace(result):
 
 
 def run_catalog_lookup(state):
-    structured_result = run_structured_lookup(
-        state["user_query"],
-        intent_result=state["intent_result"],
-    )
+    candidates = state.get("candidates", [])
+    # Java candidates are the production fact source. The local JSON catalog is
+    # retained only for standalone Python demos and legacy tests without Java context.
+    if candidates:
+        structured_result = run_candidate_structured_lookup(
+            state["user_query"],
+            intent_result=state["intent_result"],
+            candidates=candidates,
+        )
+    else:
+        structured_result = run_structured_lookup(
+            state["user_query"],
+            intent_result=state["intent_result"],
+        )
     update = build_tool_update(
         state,
         "structured_lookup",
@@ -290,12 +581,12 @@ def rag_retriever_node(state, registry=None, max_tool_calls=3):
     return build_tool_update(state, rag_tool.name, rag_tool.result_key, result)
 
 
-def chunk_is_relevant(chunk, query_type):
+def chunk_is_relevant(chunk, query_type, threshold=RAG_DISTANCE_THRESHOLD):
     score = float(chunk.get("score", 1.0))
     file_name = chunk.get("file_name")
     allowed_sources = RAG_ALLOWED_SOURCES.get(query_type)
 
-    if score > RETRIEVAL_SCORE_THRESHOLD:
+    if score > threshold:
         return False
 
     if allowed_sources and file_name not in allowed_sources:
@@ -403,6 +694,54 @@ def fallback_answer_node(state):
     }
 
 
+def build_candidate_recommendation_refs(state):
+    return build_product_refs(
+        state.get("candidates", []),
+        state.get("intent_result", {}),
+        state.get("user_query", ""),
+        state.get("user_context", {}),
+        state.get("tool_results", {}),
+        demand_intent=state.get("demand_intent", {}),
+    )
+
+
+def has_candidate_backed_recommendation(state):
+    return (
+        state.get("intent_result", {}).get("intent") == INTENT_RECOMMENDATION
+        and bool(build_candidate_recommendation_refs(state))
+    )
+
+
+def build_candidate_recommendation_draft(state):
+    refs = build_candidate_recommendation_refs(state)
+    if not refs:
+        return None
+
+    candidate_by_sku = {
+        candidate.get("sku_id"): candidate
+        for candidate in state.get("candidates", [])
+        if candidate.get("sku_id") is not None
+    }
+    lines = ["我从当前商品库候选里优先推荐："]
+
+    for index, ref in enumerate(refs, start=1):
+        candidate = candidate_by_sku.get(ref.get("sku_id"), {})
+        name = candidate.get("name") or f"商品 {ref.get('spu_id')}"
+        color = candidate.get("color")
+        size = candidate.get("size")
+        price = candidate.get("sale_price")
+        details = " / ".join(str(value) for value in [color, size, f"{price:g} 元" if isinstance(price, (int, float)) else None] if value)
+        prefix = f"{index}. {name}"
+        if details:
+            prefix = f"{prefix}（{details}）"
+        reason = ref.get("reason", "符合当前筛选条件。")
+        if isinstance(reason, str) and reason.startswith(f"{name}："):
+            reason = reason.removeprefix(f"{name}：")
+        lines.append(f"{prefix}：{reason}")
+
+    return "\n".join(lines)
+
+
 def build_structured_draft(structured_result):
     lookup_type = structured_result.get("lookup_type")
     name = structured_result.get("matched_product_name") or "这件商品"
@@ -472,11 +811,15 @@ def answer_generator_node(state, answer_generator=None):
     generation_attempts = state.get("generation_attempts", 0) + 1
     structured_result = state.get("structured_result") or {}
     structured_draft = build_structured_draft(structured_result)
+    recommendation_draft = build_candidate_recommendation_draft(state)
     size_draft = build_size_recommendation_draft(state)
 
     if structured_draft:
         draft_answer = structured_draft
         final_prompt = "structured_lookup draft，不调用大模型。"
+    elif recommendation_draft:
+        draft_answer = recommendation_draft
+        final_prompt = "java_candidate_recommendation draft，不调用大模型。"
     elif size_draft:
         draft_answer = size_draft
         final_prompt = "size_tool draft，不调用大模型。"
@@ -542,7 +885,39 @@ def answer_validator_node(state):
             ),
         }
 
+    accepted_chunks = state.get("accepted_chunks", [])
+    candidate_backed_recommendation = has_candidate_backed_recommendation(state)
+
+    # 结构化查询已在前面返回；这里仅防止纯 RAG 草稿把解释性知识扩展成交易事实。
+    if accepted_chunks and not candidate_backed_recommendation:
+        forbidden_fact = find_forbidden_rag_fact(draft_answer)
+        if forbidden_fact:
+            validation_result = {
+                "grounded": False,
+                "retryable": True,
+                "reason": "rag_answer_contains_forbidden_commerce_fact",
+            }
+            return {
+                "validation_result": validation_result,
+                "validation_feedback": "删除价格、库存、SKU 和上下架结论，只使用已接受的解释性知识。",
+                "trace_events": make_trace(
+                    "answer_validated",
+                    grounded=False,
+                    retryable=True,
+                    reason="forbidden_rag_fact",
+                    forbidden_fact=forbidden_fact,
+                ),
+            }
+
     if state.get("tool_results", {}).get("rag_tool") and not state.get("accepted_chunks"):
+        if candidate_backed_recommendation:
+            return {
+                "answer": state.get("draft_answer", ""),
+                "validation_result": validation_result,
+                "stop_reason": "final_answer",
+                "trace_events": make_trace("answer_validated", grounded=True, source="java_candidates"),
+            }
+
         answer = "当前知识库没有检索到足够可靠的资料，暂时不能给出确定建议。你可以补充商品名、场景或联系人工客服确认。"
         validation_result = {
             "grounded": False,
@@ -556,8 +931,14 @@ def answer_validator_node(state):
             "trace_events": make_trace("answer_validated", grounded=False, source="rag_tool"),
         }
 
+    answer = state.get("draft_answer", "")
+
+    # 只引用 grader 已接受的 chunk，不能把被拒绝或结构化查询结果伪装成 RAG 来源。
+    if state.get("tool_results", {}).get("rag_tool") and accepted_chunks:
+        answer = append_rag_sources(answer, accepted_chunks)
+
     return {
-        "answer": state.get("draft_answer", ""),
+        "answer": answer,
         "validation_result": validation_result,
         "stop_reason": "final_answer",
         "trace_events": make_trace("answer_validated", grounded=True, source="draft_answer"),
@@ -579,6 +960,13 @@ def trace_logger_node(state):
             "price_cny": structured_result.get("price_cny"),
         },
         "accepted_chunk_count": len(state.get("accepted_chunks", [])),
+        "rag_sources": [
+            {
+                "file_name": chunk.get("file_name"),
+                "chunk_id": chunk.get("chunk_id"),
+            }
+            for chunk in state.get("accepted_chunks", [])
+        ],
         "validation": state.get("validation_result", {}),
     }
 
@@ -705,6 +1093,9 @@ def route_after_retrieval_grader(state):
     status = (state.get("retrieval_route") or {}).get("status")
 
     if status == "good":
+        return "answer_generator"
+
+    if status in {"weak", "empty"} and has_candidate_backed_recommendation(state):
         return "answer_generator"
 
     if status in {"weak", "empty"}:

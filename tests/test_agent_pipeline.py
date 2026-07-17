@@ -4,6 +4,7 @@ from pathlib import Path
 
 from clothing_assistant.agent import agent_executor
 from clothing_assistant.agent.agent_executor import run_agent
+from clothing_assistant.agent.langgraph_executor import run_langgraph_agent
 from clothing_assistant.agent.state import AgentState, make_trace
 from clothing_assistant.agent.tool_registry import (
     build_default_tool_registry,
@@ -26,6 +27,15 @@ def fake_rag_runner(query, query_type=None):
             }
         ],
         "source_count": 1,
+    }
+
+
+def fake_empty_rag_runner(query, query_type=None):
+    return {
+        "retrieval_query": query,
+        "retrieved_chunks": [],
+        "source_count": 0,
+        "rag_meta": {"version": "test-rag-version", "chunk_count": 0},
     }
 
 
@@ -110,6 +120,151 @@ class AgentPipelineTests(unittest.TestCase):
         self.assertEqual(result["debug"]["stop_reason"], "final_answer")
         self.assertIn("trace_events", result["debug"])
         self.assertIn("tool_result", [event["step"] for event in result["debug"]["trace_events"]])
+
+    def test_recommendation_uses_java_candidates_when_rag_is_empty(self):
+        registry = build_default_tool_registry(
+            rag_runner=fake_empty_rag_runner,
+            policy_runner=fake_policy_runner,
+            size_runner=fake_size_runner,
+        )
+        candidates = [
+            {
+                "spu_id": 1002,
+                "sku_id": 2101,
+                "name": "通勤夹克",
+                "category_name": "外套",
+                "fit_type": "合身",
+                "color": "黑色",
+                "size": "M",
+                "materials": "棉混纺",
+                "seasons": ["spring", "autumn"],
+                "style_tags": ["commute", "minimal"],
+                "sale_price": 299.0,
+                "stock_status": "in_stock",
+                "attribute_tags": ["适用场景:通勤", "风格:简洁"],
+            }
+        ]
+
+        result = run_langgraph_agent(
+            "推荐一件500以内适合通勤的外套",
+            tool_registry=registry,
+            answer_generator=fake_answer_generator,
+            candidates=candidates,
+            user_context={"user_id": 1},
+            thread_id="test-recommendation-candidates",
+        )
+
+        self.assertEqual(result["debug"]["retrieval_route"]["status"], "empty")
+        self.assertEqual(result["debug"]["stop_reason"], "final_answer")
+        self.assertEqual(result["debug"]["recommendation_source"], "java_candidates_with_ai_rerank")
+        self.assertIn("semantic_preferences", result["debug"])
+        self.assertIn("candidate_scores", result["debug"])
+        self.assertEqual(result["debug"]["selected_product_refs"], result["product_refs"])
+        self.assertEqual(result["debug"]["rag_meta"]["version"], "test-rag-version")
+        self.assertEqual(result["product_refs"][0]["spu_id"], 1002)
+        self.assertIn("通勤夹克", result["answer"])
+        self.assertNotIn("当前知识库没有检索到", result["answer"])
+
+    def test_outfit_search_with_slimming_budget_uses_candidates_when_rag_is_empty(self):
+        registry = build_default_tool_registry(
+            rag_runner=fake_empty_rag_runner,
+            policy_runner=fake_policy_runner,
+            size_runner=fake_size_runner,
+        )
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "通勤轻薄风衣",
+                "category_name": "外套",
+                "fit_type": "合身",
+                "color": "黑色",
+                "size": "M",
+                "materials": "棉混纺",
+                "seasons": ["spring"],
+                "style_tags": ["commute", "basic"],
+                "sale_price": 439.0,
+                "stock_status": "in_stock",
+                "attribute_tags": ["适用场景:通勤", "风格:简洁"],
+            }
+        ]
+
+        result = run_langgraph_agent(
+            "我想找一套适合春天通勤的穿搭，显瘦一点，预算500以内",
+            tool_registry=registry,
+            answer_generator=fake_answer_generator,
+            candidates=candidates,
+            user_context={"user_id": 1},
+            thread_id="test-outfit-search-candidates",
+        )
+
+        self.assertEqual(result["debug"]["intent_result"]["intent"], "recommendation")
+        self.assertEqual(result["debug"]["retrieval_route"]["status"], "empty")
+        self.assertEqual(result["debug"]["stop_reason"], "final_answer")
+        self.assertEqual(result["product_refs"][0]["spu_id"], 1001)
+        self.assertIn("通勤轻薄风衣", result["answer"])
+        self.assertNotIn("当前知识库没有检索到", result["answer"])
+
+    def test_price_check_uses_java_candidate_price(self):
+        candidates = [
+            {
+                "spu_id": 9101,
+                "sku_id": 9201,
+                "spu_code": "JAVA_ONLY_TSHIRT",
+                "sku_code": "JAVA_ONLY_TSHIRT-BLACK-L",
+                "name": "候选款测试T恤",
+                "category": "T恤",
+                "color": "黑色",
+                "size": "L",
+                "sale_price": 123.0,
+                "stock_status": "in_stock",
+                "available_stock": 17,
+            }
+        ]
+
+        result = run_langgraph_agent(
+            "候选款测试T恤多少钱？",
+            candidates=candidates,
+            user_context={"user_id": 1},
+            thread_id="test-price-uses-java-candidates",
+        )
+
+        self.assertEqual(result["debug"]["stop_reason"], "final_answer")
+        self.assertIn("候选款测试T恤", result["answer"])
+        self.assertIn("123", result["answer"])
+        self.assertNotIn("99", result["answer"])
+        self.assertEqual(result["debug"]["structured_result"]["reason"], "价格来自 Java 候选商品。")
+
+    def test_inventory_check_uses_java_candidate_stock(self):
+        candidates = [
+            {
+                "spu_id": 9101,
+                "sku_id": 9201,
+                "spu_code": "JAVA_ONLY_TSHIRT",
+                "sku_code": "JAVA_ONLY_TSHIRT-BLACK-L",
+                "name": "候选款测试T恤",
+                "category": "T恤",
+                "color": "黑色",
+                "size": "L",
+                "sale_price": 123.0,
+                "stock_status": "in_stock",
+                "available_stock": 17,
+            }
+        ]
+
+        result = run_langgraph_agent(
+            "候选款测试T恤黑色L码有货吗？",
+            candidates=candidates,
+            user_context={"user_id": 1},
+            thread_id="test-inventory-uses-java-candidates",
+        )
+
+        self.assertEqual(result["debug"]["stop_reason"], "final_answer")
+        self.assertIn("候选款测试T恤", result["answer"])
+        self.assertIn("黑色", result["answer"])
+        self.assertIn("L", result["answer"])
+        self.assertIn("17", result["answer"])
+        self.assertEqual(result["debug"]["structured_result"]["reason"], "库存来自 Java 候选商品。")
 
     def test_policy_fallback_stops_before_answer_generation(self):
         registry = build_default_tool_registry(

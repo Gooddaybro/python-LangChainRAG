@@ -2,11 +2,80 @@ import unittest
 
 from clothing_assistant.agent.router import intent_router
 from clothing_assistant.agent.langgraph_executor import run_langgraph_agent
-from clothing_assistant.application.recommendation_service import build_product_refs
+from clothing_assistant.application.recommendation_service import build_product_refs, build_product_rerank_result
 from clothing_assistant.tools.size_tool import normalize_measurement_query, run_size_tool
 
 
 class RecommendationServiceTests(unittest.TestCase):
+    def test_build_product_rerank_result_exposes_preferences_scores_and_source(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "基础通勤夹克",
+                "category": "外套",
+                "color": "黑色",
+                "stock_status": "in_stock",
+                "style_tags": ["commute", "casual", "basic"],
+                "attribute_tags": ["适用场景:通勤", "风格:基础款"],
+                "sale_price": 269,
+            },
+            {
+                "spu_id": 1002,
+                "sku_id": 2002,
+                "name": "正式商务西装",
+                "category": "西装",
+                "color": "黑色",
+                "stock_status": "in_stock",
+                "style_tags": ["formal"],
+                "attribute_tags": ["风格:商务正装"],
+                "sale_price": 899,
+            },
+        ]
+
+        result = build_product_rerank_result(
+            candidates,
+            {"intent": "recommendation"},
+            "推荐一件300以内适合学生党通勤、不要太正式的外套",
+            {},
+            {},
+        )
+
+        self.assertEqual(result["recommendation_source"], "java_candidates_with_ai_rerank")
+        self.assertEqual(result["semantic_preferences"]["budget_max"], 300)
+        self.assertIn("student", result["semantic_preferences"]["persona_tags"])
+        self.assertIn("commute", result["semantic_preferences"]["scene"])
+        self.assertIn("overly_formal", result["semantic_preferences"]["avoid_tags"])
+        self.assertEqual(result["product_refs"][0]["spu_id"], 1001)
+        self.assertEqual(result["candidate_scores"][0]["spu_id"], 1001)
+        self.assertGreater(result["candidate_scores"][0]["rank_score"], result["candidate_scores"][1]["rank_score"])
+
+    def test_rerank_result_marks_empty_candidate_source(self):
+        result = build_product_rerank_result(
+            [],
+            {"intent": "recommendation"},
+            "推荐一件通勤外套",
+            {},
+            {},
+        )
+
+        self.assertEqual(result["product_refs"], [])
+        self.assertEqual(result["candidate_scores"], [])
+        self.assertEqual(result["recommendation_source"], "java_candidates_empty")
+
+    def test_rerank_result_marks_non_recommendable_intent_source(self):
+        result = build_product_rerank_result(
+            [{"spu_id": 1001, "sku_id": 2001, "name": "通勤外套"}],
+            {"intent": "chat"},
+            "你是谁？",
+            {},
+            {},
+        )
+
+        self.assertEqual(result["product_refs"], [])
+        self.assertEqual(result["candidate_scores"], [])
+        self.assertEqual(result["recommendation_source"], "not_recommendable_intent")
+
     def test_bare_height_weight_pair_is_routed_as_size_signal(self):
         result = intent_router("明天面试想要显瘦 177 130 该怎么选")
 
@@ -238,6 +307,114 @@ class RecommendationServiceTests(unittest.TestCase):
         self.assertIn("价格 299 在预算 300 内", reason)
         self.assertIn("黑色匹配颜色偏好", reason)
 
+    def test_rag_chunks_enrich_reason_without_overriding_candidate_facts(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "通勤轻薄外套",
+                "category": "外套",
+                "color": "黑色",
+                "stock_status": "in_stock",
+                "style_tags": ["commute"],
+                "sale_price": 299,
+            }
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "推荐一件通勤外套",
+            {"budget_max": 300},
+            {
+                "rag_tool": {
+                    "retrieved_chunks": [
+                        {
+                            "file_name": "颜色选择.txt",
+                            "content": "通勤场景优先选择黑色、灰色、藏青色等基础色，更容易搭配。",
+                            "score": 0.1,
+                        }
+                    ]
+                }
+            },
+        )
+
+        self.assertIn("RAG 知识提示", refs[0]["reason"])
+        self.assertIn("通勤场景优先选择黑色", refs[0]["reason"])
+        self.assertIn("价格 299 在预算 300 内", refs[0]["reason"])
+
+    def test_rerank_uses_java_contract_field_aliases(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "秋季T恤",
+                "category_name": "T恤",
+                "color": "白色",
+                "stock_status": "in_stock",
+                "seasons": ["summer"],
+                "sale_price": 129,
+            },
+            {
+                "spu_id": 1002,
+                "sku_id": 2002,
+                "name": "轻薄夹克",
+                "category_name": "外套",
+                "color": "黑色",
+                "stock_status": "in_stock",
+                "seasons": ["autumn"],
+                "sale_price": 299,
+            },
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "推荐一件秋季外套",
+            {},
+            {},
+        )
+
+        self.assertEqual(refs[0]["spu_id"], 1002)
+        self.assertIn("风格、季节或场景标签匹配", refs[0]["reason"])
+
+    def test_behavior_context_boosts_recent_interest_candidate(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "通勤轻薄外套",
+                "category": "外套",
+                "stock_status": "in_stock",
+                "style_tags": ["commute"],
+                "sale_price": 299,
+            },
+            {
+                "spu_id": 1002,
+                "sku_id": 2002,
+                "name": "休闲卫衣",
+                "category": "卫衣",
+                "stock_status": "in_stock",
+                "style_tags": ["casual"],
+                "sale_price": 199,
+            },
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "推荐一件外套",
+            {
+                "recent_interest_spu_ids": [1001],
+                "behavior_preferred_categories": ["外套"],
+                "behavior_preferred_styles": ["commute"],
+            },
+            {},
+        )
+
+        self.assertEqual(refs[0]["spu_id"], 1001)
+        self.assertIn("近期行为显示你关注过类似商品", refs[0]["reason"])
+
     def test_fuzzy_student_budget_query_prefers_matching_candidate(self):
         candidates = [
             {
@@ -449,6 +626,124 @@ class RecommendationServiceTests(unittest.TestCase):
         self.assertIn("价格和风格更适合学生日常穿搭", refs[0]["reason"])
         self.assertIn("版型或腰线更利于拉长比例", refs[0]["reason"])
         self.assertIn("颜色、线条或版型更贴合显瘦需求", refs[0]["reason"])
+
+    def test_java_demand_intent_affects_rerank_when_query_is_vague(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "黑色中高腰直筒裤",
+                "category": "裤子",
+                "color": "黑色",
+                "stock_status": "in_stock",
+                "style_tags": ["casual"],
+                "attribute_tags": ["腰线:中高腰", "下装版型:直筒"],
+                "sale_price": 199,
+            },
+            {
+                "spu_id": 1002,
+                "sku_id": 2002,
+                "name": "米色低腰商务裤",
+                "category": "裤子",
+                "color": "米色",
+                "stock_status": "in_stock",
+                "style_tags": ["formal"],
+                "attribute_tags": ["腰线:低腰", "风格:商务正装"],
+                "sale_price": 899,
+            },
+        ]
+
+        result = build_product_rerank_result(
+            candidates,
+            {"intent": "recommendation"},
+            "看看这个",
+            {},
+            {},
+            demand_intent={
+                "scene": ["campus", "daily"],
+                "style": ["casual"],
+                "attributes": ["平价", "显瘦", "显高"],
+            },
+        )
+
+        self.assertEqual(result["product_refs"][0]["spu_id"], 1001)
+        self.assertEqual(result["semantic_preferences"]["price_preference"], "budget")
+        self.assertIn("slimmer", result["semantic_preferences"]["visual_goals"])
+        self.assertIn("taller", result["semantic_preferences"]["visual_goals"])
+        self.assertIn("版型或腰线更利于拉长比例", result["product_refs"][0]["reason"])
+
+    def test_winter_warm_query_prefers_real_warm_candidates(self):
+        candidates = [
+            {
+                "spu_id": 1119,
+                "sku_id": 11192,
+                "name": "极简通勤Polo衫",
+                "category": "T恤",
+                "stock_status": "in_stock",
+                "season": ["autumn", "all_season"],
+                "style_tags": ["minimal", "casual"],
+                "attribute_tags": ["适用场景:通勤", "厚度:常规"],
+                "sale_price": 139,
+            },
+            {
+                "spu_id": 1110,
+                "sku_id": 11102,
+                "name": "约会A字半裙",
+                "category": "半裙",
+                "stock_status": "in_stock",
+                "season": ["autumn"],
+                "style_tags": ["date", "commute"],
+                "attribute_tags": ["适用场景:约会社交", "厚度:常规"],
+                "sale_price": 189,
+            },
+            {
+                "spu_id": 1116,
+                "sku_id": 11162,
+                "name": "羊毛保暖针织衫",
+                "category": "针织衫",
+                "material": "羊毛",
+                "stock_status": "in_stock",
+                "season": ["winter"],
+                "style_tags": ["minimal"],
+                "attribute_tags": ["厚度:厚款", "材质特征:保暖"],
+                "sale_price": 279,
+            },
+        ]
+
+        refs = build_product_refs(
+            candidates,
+            {"intent": "recommendation"},
+            "秋冬保暖的?",
+            {},
+            {},
+        )
+
+        self.assertEqual([ref["spu_id"] for ref in refs], [1116])
+        self.assertIn("匹配冬季需求", refs[0]["reason"])
+        self.assertIn("材质或厚度更适合保暖", refs[0]["reason"])
+
+    def test_winter_warm_query_returns_no_refs_without_strong_match(self):
+        refs = build_product_refs(
+            [
+                {
+                    "spu_id": 1119,
+                    "sku_id": 11192,
+                    "name": "极简通勤Polo衫",
+                    "category": "T恤",
+                    "stock_status": "in_stock",
+                    "season": ["autumn", "all_season"],
+                    "style_tags": ["minimal"],
+                    "attribute_tags": ["厚度:常规"],
+                    "sale_price": 139,
+                }
+            ],
+            {"intent": "recommendation"},
+            "秋冬保暖的?",
+            {},
+            {},
+        )
+
+        self.assertEqual(refs, [])
 
 
 if __name__ == "__main__":

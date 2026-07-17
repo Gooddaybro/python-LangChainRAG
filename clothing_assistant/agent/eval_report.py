@@ -85,12 +85,14 @@ def build_fake_tool_registry():
 
 def evaluate_executor_case(case, executor_name, executor_fn, tool_registry, answer_generator):
     """执行单个 case，并把实际结果和期望契约比对成一行报告。"""
-    result = executor_fn(
-        case["query"],
-        chat_history=case.get("chat_history"),
-        tool_registry=tool_registry,
-        answer_generator=answer_generator,
-    )
+    runner_kwargs = {
+        "chat_history": case.get("chat_history"),
+        "tool_registry": tool_registry,
+        "answer_generator": answer_generator,
+    }
+    if executor_name == "langgraph":
+        runner_kwargs["allow_demo_catalog"] = True
+    result = executor_fn(case["query"], **runner_kwargs)
     debug = result["debug"]
     actual_intent = debug["intent_result"]["intent"]
     actual_tools = debug["selected_tools"]

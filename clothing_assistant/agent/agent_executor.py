@@ -51,7 +51,10 @@ def build_agent_query(user_query, memory_result):
 
 def route_intent(state):
     """Pipeline 阶段 1：识别意图并写入 State。返回 trace_events。"""
-    state["intent_result"] = intent_router(state["user_query"])
+    state["intent_result"] = intent_router(
+        state["user_query"],
+        state.get("demand_intent"),
+    )
     return make_trace(
         "route_intent",
         intent=state["intent_result"]["intent"],

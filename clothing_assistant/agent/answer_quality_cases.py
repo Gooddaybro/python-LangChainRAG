@@ -90,6 +90,16 @@ ANSWER_QUALITY_CASES = [
         "max_answer_length": 160,
     },
     {
+        "name": "pure_rag_commerce_fact_falls_back",
+        "query": "这件通勤外套上班穿合适吗？",
+        "must_include": ["没有通过证据校验"],
+        "must_not_include": ["库存", "99 元", "SKU", "已上架"],
+        "expected_grounding": "rag_tool",
+        "expected_stop_reason": "answer_fallback",
+        "answer_type": "rag",
+        "max_answer_length": 160,
+    },
+    {
         "name": "size_follow_up_uses_history",
         "query": "那我想宽松一点呢？",
         "chat_history": SIZE_HISTORY,
@@ -117,4 +127,3 @@ ANSWER_QUALITY_CASES = [
         "max_answer_length": 140,
     },
 ]
-

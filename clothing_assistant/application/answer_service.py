@@ -4,8 +4,55 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from clothing_assistant.agent.router import INTENT_CHAT, INTENT_UNKNOWN
 from clothing_assistant.agent.tracing import persist_trace_if_enabled
-from clothing_assistant.application.recommendation_service import build_product_refs
+from clothing_assistant.application.recommendation_service import build_product_rerank_result
 from clothing_assistant.infrastructure.llm_client import get_chat_model
+
+
+def format_rag_sources(chunks):
+    """Build deterministic user-facing citations from accepted RAG chunks.
+
+    The application, rather than the chat model, creates these citations so a
+    generated answer cannot claim a file or chunk that retrieval did not pass.
+
+    Args:
+        chunks: Accepted retrieval chunks containing ``file_name`` and ``chunk_id``.
+
+    Returns:
+        A deduplicated citation string, or an empty string when no valid source exists.
+    """
+    seen = set()
+    sources = []
+
+    for chunk in chunks or []:
+        file_name = chunk.get("file_name")
+        chunk_id = chunk.get("chunk_id")
+        key = (file_name, chunk_id)
+
+        if not file_name or not chunk_id or key in seen:
+            continue
+
+        seen.add(key)
+        sources.append(f"{file_name}（{chunk_id}）")
+
+    return "、".join(sources)
+
+
+def append_rag_sources(answer, chunks):
+    """Append citations only when deterministic accepted-RAG sources exist.
+
+    Args:
+        answer: User-facing answer that passed the answer validator.
+        chunks: Accepted RAG chunks used as the only valid citation inputs.
+
+    Returns:
+        The original answer when no source is available; otherwise the answer
+        followed by a deterministic source footer.
+    """
+    sources = format_rag_sources(chunks)
+    if not sources:
+        return answer
+
+    return f"{answer}\n\n参考资料：{sources}"
 
 
 def format_chunks(chunks):
@@ -73,14 +120,19 @@ RAG 检索资料：
 """.strip()
 
 
+def build_answer_messages(final_prompt):
+    """Build the shared provider message list for sync and streaming generation."""
+    return [
+        SystemMessage(content="你是可靠的电商服装导购客服 Agent。"),
+        HumanMessage(content=final_prompt),
+    ]
+
+
 def generate_final_answer(user_query, intent_result, memory_result, tool_results):
     """调用真实聊天模型生成最终回答。测试里会用 fake answer_generator 替代它。"""
     final_prompt = build_final_prompt(user_query, intent_result, memory_result, tool_results)
     chat_model = get_chat_model()
-    messages = [
-        SystemMessage(content="你是可靠的电商服装导购客服 Agent。"),
-        HumanMessage(content=final_prompt),
-    ]
+    messages = build_answer_messages(final_prompt)
     response = chat_model.invoke(messages)
 
     return response.content, final_prompt
@@ -174,7 +226,7 @@ def build_agent_response(
 ):
     """统一 Agent 输出契约。"""
     rag_result = tool_results.get("rag_tool") or {}
-    product_refs = build_product_refs(
+    rerank_result = build_product_rerank_result(
         candidates,
         intent_result,
         user_query,
@@ -182,6 +234,7 @@ def build_agent_response(
         tool_results,
         demand_intent=demand_intent,
     )
+    product_refs = rerank_result["product_refs"]
 
     return {
         "answer": answer,
@@ -196,12 +249,17 @@ def build_agent_response(
             "candidates": candidates or [],
             "demand_intent": demand_intent or {},
             "product_refs": product_refs,
+            "selected_product_refs": product_refs,
+            "semantic_preferences": rerank_result["semantic_preferences"],
+            "candidate_scores": rerank_result["candidate_scores"],
+            "recommendation_source": rerank_result["recommendation_source"],
             "intent_result": intent_result,
             "selected_tools": selected_tools,
             "used_history": memory_result["used_history"],
             "ignored_history_reason": memory_result["ignored_history_reason"],
             "retrieval_query": rag_result.get("retrieval_query"),
             "retrieved_chunks": rag_result.get("retrieved_chunks", []),
+            "rag_meta": rag_result.get("rag_meta", {}),
             "missing_info_result": missing_info_result or {},
             "structured_result": structured_result or {},
             "accepted_chunks": accepted_chunks or [],

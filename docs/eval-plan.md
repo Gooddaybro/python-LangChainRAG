@@ -258,6 +258,37 @@ python -m clothing_assistant.agent.eval_report
 python -m clothing_assistant.agent.answer_quality_report
 ```
 
+## 9. 真实检索评测与当前验收结果
+
+真实检索评测和 fake tool 的路由评测必须分开。前者调用 Jina embedding 和本地
+JSON 向量索引，回答“问题是否召回正确知识”；后者只验证 Agent 路由和业务边界。
+
+运行方式：
+
+```bash
+.venv/bin/python -m clothing_assistant.infrastructure.vector_store
+.venv/bin/python -m clothing_assistant.agent.retrieval_eval_report \
+  --format markdown \
+  --output docs/evals/2026-07-11-rag-final.md
+```
+
+截至 2026-07-11，16 个真实检索 case 的最终结果为：
+
+| 指标 | 结果 | 验收目标 |
+| --- | ---: | ---: |
+| Positive Hit@3 | 13 / 14（92.86%） | >= 90% |
+| 知识外拒答准确率 | 2 / 2（100%） | >= 90% |
+| 错误接受数 | 0 / 2 | 0 |
+| 运行参数 | `top_k=3`、距离阈值 `0.25` | 以评测决策为准 |
+
+`care_knit_drying` 被更严格的阈值拒绝，分类为 `threshold_rejected`。
+这是为了消除知识外错误接受而记录的保守取舍，具体参数对比见
+`docs/evals/2026-07-11-rag-parameter-decision.md`。
+
+最终答案质量和安全边界由确定性测试验证：库存/价格不进入 RAG，Java 候选池外
+不会产生 `product_refs`，已接受 RAG 答案带程序生成的来源，纯 RAG 不得断言
+价格、库存、SKU 或上下架状态。
+
 确定性报告字段：
 
 ```text

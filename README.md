@@ -9,10 +9,22 @@
 
 ```powershell
 pip install -r requirements.txt
-$env:DASHSCOPE_API_KEY="your-dashscope-api-key"
+Copy-Item .env.example .env
 ```
 
-`DASHSCOPE_API_KEY` 是当前项目的统一大模型 Key。默认只用于回答生成；如需启用“学生党、显高显瘦、平价百搭”等模糊需求的大模型结构化映射，再额外设置：
+在项目根目录的 `.env` 中填写：
+
+```dotenv
+# 建立或查询 RAG 向量索引必填
+JINA_API_KEY=your-jina-api-key
+
+# 生成最终回答时必填；只重建索引和跑检索评测时可以留空
+MOONSHOT_API_KEY=your-moonshot-api-key
+```
+
+`.env` 已被 Git 忽略，不能提交或发送。Jina 只负责将知识块和用户问题转换为向量；Kimi 只负责基于已检索证据生成最终回答。
+
+如需启用“学生党、显高显瘦、平价百搭”等模糊需求的大模型结构化映射，再额外设置：
 
 ```powershell
 $env:ENABLE_LLM_PREFERENCE_MAPPER="true"
@@ -33,6 +45,14 @@ streamlit run clothing_assistant/ui/app_file_uploader.py
 ```powershell
 streamlit run clothing_assistant/ui/app_qa.py
 ```
+
+也可以直接从已提交的知识文件全量重建本地向量索引：
+
+```bash
+.venv/bin/python -m clothing_assistant.infrastructure.vector_store
+```
+
+该命令需要先配置 `JINA_API_KEY`。生成的 `clothing_assistant/chroma_db/` 是本地 JSON 向量索引（派生数据），不提交到 Git。
 
 ## FastAPI Backend
 
@@ -57,6 +77,7 @@ uvicorn clothing_assistant.api.app:app --reload --port 8001
 当前接口：
 
 - `GET /health`：健康检查。
+- `GET /health/rag`：检查本地 RAG 索引是否就绪。
 - `POST /chat`：调用 LangGraph 主线 `run_langgraph_agent`。
 - `POST /chat/stream`：按 `..\outfit-project-contract\contracts\assistant-streaming-chat\v1.md` 输出 `token`、`done`、`error` SSE 事件，供 Java 后端流式转发。
 - `POST /chat/pipeline`：调用旧手写 pipeline `run_agent`，用于迁移对照和回归检查。
@@ -67,6 +88,44 @@ Java 后端联动契约见 `docs/integration/java-python-chat-contract.md`。
 Java/Python 接口调整开发文档见 `docs/integration/java-python-chat-interface-development.md`。
 Java/Python 接口调试文档见 `docs/integration/java-python-chat-interface-debugging.md`。
 跨项目架构边界见 `docs/architecture/java-ai-clothing-mall-architecture.md`。
+
+### Safe model-time streaming
+
+`POST /chat/stream` consumes real Kimi provider fragments while the model is
+generating. Python retains a safety tail and applies the same deterministic
+commerce-fact rules used by the normal answer validator before releasing text.
+`done.answer` is always the exact concatenation of emitted token contents.
+
+Direct answers, Java-candidate answers, size rules, and fallback answers are
+deterministic and may be emitted as one token event. A provider call may retry
+only before public text is emitted. Client disconnect closes the request-scoped
+stream and prevents later graph work or a `done` event.
+
+Runtime defaults are `LLM_TIMEOUT_SECONDS=30`, `LLM_MAX_RETRIES=2`,
+`LLM_MAX_CONCURRENCY=8`, `RAG_TIMEOUT_SECONDS=20`, and
+`STREAM_SAFETY_TAIL_CHARS=64`.
+
+### Local PostgreSQL Checkpoints
+
+Development and tests use an in-memory checkpointer. To run the production
+checkpointer locally, execute the following from the workspace root. The DSN
+must use a password supplied through your local `.env` or shell, never a value
+committed to this repository:
+
+```bash
+sh scripts/start-local-deps.sh
+cd AI-Clothing-Shopping-Assistant-System
+AI_RUNTIME_ENV=production \
+LANGGRAPH_CHECKPOINTER_BACKEND=postgres \
+LANGGRAPH_CHECKPOINTER_DSN='postgresql://...' \
+.venv/bin/python -m uvicorn clothing_assistant.api.app:app
+```
+
+PostgreSQL checkpoint tables are LangGraph runtime metadata only. Java/MySQL
+continues to own conversation messages, user identity, product facts, and
+transaction state. Request payload channels are untracked and do not appear in
+durable checkpoints; `PostgresSaver.setup()` creates the checkpointer tables on
+Python startup.
 
 ## Agent Executors
 
@@ -120,6 +179,44 @@ python -m clothing_assistant.agent.eval_report
 python -m clothing_assistant.agent.answer_quality_report
 python -m unittest tests.test_answer_quality_report -v
 ```
+
+生成真实向量检索报告。它不使用 fake chunks，专门统计正向问题的命中率和超出知识范围问题的错误接受率：
+
+```bash
+.venv/bin/python -m clothing_assistant.agent.retrieval_eval_report
+.venv/bin/python -m clothing_assistant.agent.retrieval_eval_report \
+  --top-k 3 \
+  --threshold 0.7 \
+  --output docs/evals/rag-retrieval.md
+```
+
+上述索引重建和检索评测只需要 Jina key；只有调用聊天回答、或开启 `ENABLE_LLM_PREFERENCE_MAPPER=true` 时才需要 Moonshot/Kimi key。
+
+## RAG Reliability Status
+
+当前 RAG 使用 6 份解释性知识文件（颜色、洗涤、尺码、场景、材质、版型），
+共 51 个文本块。运行时参数由真实检索评测选择：`top_k=3`、距离阈值 `0.25`。
+
+最终检索报告：正向命中 `13/14`（92.86%），知识外问题错误接受 `0/2`。
+详细结果见 `docs/evals/2026-07-11-rag-final.md`，参数选择过程见
+`docs/evals/2026-07-11-rag-parameter-decision.md`。
+
+RAG 回答只会引用已接受的知识块，例如：
+
+```text
+参考资料：洗涤养护.txt（洗涤养护.txt-001）
+```
+
+价格、库存、SKU、上下架仍只来自 Java/MySQL 的结构化数据；纯 RAG 草稿出现
+这些强业务事实时会重试一次，仍不合格则返回保守兜底。
+
+检查索引状态：
+
+```bash
+curl -s http://127.0.0.1:8000/health/rag
+```
+
+返回只包含 `ready`、原因、chunk 数、版本和构建时间，不会暴露知识正文或向量。
 
 ## Local Agent Trace
 

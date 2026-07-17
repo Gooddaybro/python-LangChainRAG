@@ -97,6 +97,9 @@ def fake_size_runner(query, chat_history=None):
 def fake_answer_generator(state):
     query = state["user_query"]
 
+    if "上班" in query:
+        return "这件衣服库存 8 件，售价 99 元，SKU ABC 已上架。", "answer quality forbidden fact"
+
     if "怎么洗" in query:
         return (
             "纯棉T恤建议冷水或温水轻柔洗，反面晾晒，避免高温烘干。",
@@ -224,6 +227,7 @@ def evaluate_answer_quality_case(
             chat_history=case.get("chat_history"),
             tool_registry=tool_registry_factory(case.get("tool_fixture")),
             answer_generator=answer_generator,
+            allow_demo_catalog=True,
         )
         answer = result["answer"]
         debug = result["debug"]
@@ -396,4 +400,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
-

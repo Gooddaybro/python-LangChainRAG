@@ -1,6 +1,10 @@
 import unittest
 from uuid import uuid4
 
+from langgraph.channels import UntrackedValue
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import START
+
 from clothing_assistant.agent.eval_cases import (
     EVAL_CASES,
     case_supports_executor,
@@ -9,6 +13,7 @@ from clothing_assistant.agent.eval_cases import (
 from clothing_assistant.agent import nodes
 from clothing_assistant.agent.langgraph_executor import (
     build_initial_state,
+    build_langgraph_agent,
     build_run_state_defaults,
     get_default_langgraph_agent,
     resolve_thread_id,
@@ -81,6 +86,82 @@ def build_fake_registry():
 
 
 class LangGraphShadowTests(unittest.TestCase):
+    def test_checkpoint_does_not_persist_request_sensitive_channels(self):
+        raw_query = "这件衣服 SENTINEL_RAW_QUERY 适合夏天吗？"
+        history_marker = "SENTINEL_HISTORY"
+        context_marker = "SENTINEL_CONTEXT"
+        candidate_marker = "SENTINEL_CANDIDATE"
+        demand_marker = "SENTINEL_DEMAND"
+        tool_marker = "SENTINEL_TOOL_PAYLOAD"
+        trace_marker = "SENTINEL_TRACE_MARKER"
+        chunk_marker = "SENTINEL_CHUNK"
+        evidence_marker = "SENTINEL_EVIDENCE"
+        answer_marker = "SENTINEL_ANSWER"
+        prompt_marker = "SENTINEL_PROMPT"
+
+        def sentinel_rag_runner(query, query_type=None):
+            return {
+                "retrieval_query": query,
+                "tool_payload": tool_marker,
+                "matched_product_id": trace_marker,
+                "retrieved_chunks": [
+                    {
+                        "chunk_id": evidence_marker,
+                        "file_name": "颜色选择.txt",
+                        "content": chunk_marker,
+                        "score": 0.1,
+                    }
+                ],
+                "source_count": 1,
+            }
+
+        def sentinel_answer_generator(state):
+            return answer_marker, prompt_marker
+
+        saver = InMemorySaver()
+        result = run_langgraph_agent(
+            raw_query,
+            chat_history=[{"user_query": history_marker, "assistant_answer": history_marker}],
+            user_context={"user_id": 7, "preferred_colors": [context_marker]},
+            candidates=[{"name": candidate_marker}],
+            demand_intent={"scene": demand_marker},
+            thread_id="checkpoint-privacy",
+            checkpointer=saver,
+            tool_registry=build_default_tool_registry(
+                rag_runner=sentinel_rag_runner,
+                policy_runner=fake_policy_runner,
+                size_runner=fake_size_runner,
+            ),
+            answer_generator=sentinel_answer_generator,
+        )
+        serialized = repr(list(saver.list({"configurable": {"thread_id": "checkpoint-privacy"}})))
+
+        for marker in (
+            raw_query,
+            history_marker,
+            context_marker,
+            candidate_marker,
+            demand_marker,
+            tool_marker,
+            trace_marker,
+            chunk_marker,
+            evidence_marker,
+            answer_marker,
+            prompt_marker,
+        ):
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, serialized)
+
+        self.assertEqual(result["debug"]["thread_id"], "checkpoint-privacy")
+        self.assertIn(trace_marker, repr(result["debug"]["trace_events"]))
+        self.assertIn(answer_marker, result["answer"])
+        self.assertEqual(result["debug"]["final_prompt"], prompt_marker)
+
+    def test_compiled_start_channel_is_untracked(self):
+        graph = build_langgraph_agent(checkpointer=InMemorySaver())
+
+        self.assertIsInstance(graph.channels[START], UntrackedValue)
+
     def test_nodes_module_exposes_graph_node_functions(self):
         self.assertTrue(callable(nodes.route_intent_node))
         self.assertTrue(callable(nodes.resolve_memory_node))
@@ -300,6 +381,7 @@ class LangGraphShadowTests(unittest.TestCase):
                     chat_history=case.get("chat_history"),
                     tool_registry=registry,
                     answer_generator=fake_answer_generator,
+                    allow_demo_catalog=True,
                 )
                 debug = result["debug"]
 
