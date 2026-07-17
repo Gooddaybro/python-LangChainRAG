@@ -76,11 +76,140 @@ class RecommendationServiceTests(unittest.TestCase):
         self.assertEqual(result["candidate_scores"], [])
         self.assertEqual(result["recommendation_source"], "not_recommendable_intent")
 
-    def test_bare_height_weight_pair_is_routed_as_size_signal(self):
+    def test_bare_height_weight_pair_is_auxiliary_to_outfit_task(self):
         result = intent_router("明天面试想要显瘦 177 130 该怎么选")
 
+        self.assertEqual(result["intent"], "recommendation")
+        self.assertEqual(result["request_type"], "OUTFIT_ADVICE")
+        self.assertEqual(
+            result["requested_capabilities"],
+            ["OUTFIT_PLAN", "PRODUCT_SELECTION"],
+        )
+        self.assertIn("辅助", result["reason"])
+
+    def test_router_keeps_greeting_from_short_circuiting_outfit_task(self):
+        greeting = intent_router("你好")
+        outfit = intent_router("你好，夏天怎么穿")
+
+        self.assertEqual(greeting["request_type"], "CHAT")
+        self.assertEqual(outfit["intent"], "recommendation")
+        self.assertEqual(outfit["request_type"], "OUTFIT_ADVICE")
+
+    def test_router_keeps_size_as_capability_when_outfit_is_main_task(self):
+        result = intent_router("177 130 夏天怎么穿，顺便看看穿什么码")
+
+        self.assertEqual(result["request_type"], "OUTFIT_ADVICE")
+        self.assertEqual(
+            result["requested_capabilities"],
+            ["OUTFIT_PLAN", "PRODUCT_SELECTION", "SIZE_GUIDANCE"],
+        )
+
+    def test_router_routes_explicit_size_question_as_size_main_task(self):
+        result = intent_router("177 130 穿什么码")
+
         self.assertEqual(result["intent"], "size_recommendation")
-        self.assertIn("身高体重", result["reason"])
+        self.assertEqual(result["request_type"], "SIZE_RECOMMENDATION")
+        self.assertEqual(result["requested_capabilities"], ["SIZE_GUIDANCE"])
+
+    def test_router_uses_v2_java_main_task_as_authority(self):
+        result = intent_router(
+            "你好，我177 130",
+            {
+                "version": "demand-intent-v2",
+                "requestType": "OUTFIT_ADVICE",
+                "requestedCapabilities": ["OUTFIT_PLAN", "PRODUCT_SELECTION"],
+            },
+        )
+
+        self.assertEqual(result["intent"], "recommendation")
+        self.assertEqual(result["request_type"], "OUTFIT_ADVICE")
+        self.assertEqual(
+            result["requested_capabilities"],
+            ["OUTFIT_PLAN", "PRODUCT_SELECTION"],
+        )
+
+    def test_router_keeps_v1_product_recommendation_compatibility(self):
+        result = intent_router(
+            "男性，想买夏季 T 恤",
+            {
+                "version": "demand-intent-v1",
+                "targetGender": "male",
+                "category": "T恤",
+            },
+        )
+
+        self.assertEqual(result["intent"], "recommendation")
+        self.assertEqual(result["request_type"], "PRODUCT_RECOMMENDATION")
+        self.assertEqual(result["requested_capabilities"], ["PRODUCT_SELECTION"])
+
+    def test_stock_and_base_score_do_not_create_product_ref_without_evidence(self):
+        result = build_product_rerank_result(
+            [
+                {
+                    "spu_id": 1001,
+                    "sku_id": 2001,
+                    "name": "库存充足的基础款",
+                    "category": "T恤",
+                    "stock_status": "in_stock",
+                    "available_stock": 100,
+                    "sale_price": 139,
+                }
+            ],
+            {"intent": "recommendation", "request_type": "OUTFIT_ADVICE"},
+            "夏天怎么穿",
+            {},
+            {},
+            demand_intent={
+                "version": "demand-intent-v2",
+                "requestType": "OUTFIT_ADVICE",
+                "season": "summer",
+            },
+        )
+
+        self.assertEqual(result["product_refs"], [])
+        self.assertGreaterEqual(result["candidate_scores"][0]["rank_score"], 0)
+        self.assertEqual(result["candidate_scores"][0]["matched_dimensions"], [])
+
+    def test_product_ref_contains_structured_explicit_match_evidence(self):
+        result = build_product_rerank_result(
+            [
+                {
+                    "spu_id": 1001,
+                    "sku_id": 2001,
+                    "name": "夏季休闲T恤",
+                    "category": "T恤",
+                    "season": ["summer"],
+                    "style_tags": ["casual"],
+                    "fit_type": "relaxed",
+                    "stock_status": "in_stock",
+                    "sale_price": 139,
+                }
+            ],
+            {"intent": "recommendation", "request_type": "OUTFIT_ADVICE"},
+            "夏季休闲宽松T恤怎么穿",
+            {},
+            {},
+            demand_intent={
+                "version": "demand-intent-v2",
+                "requestType": "OUTFIT_ADVICE",
+                "category": "T恤",
+                "season": "summer",
+                "style": ["casual"],
+                "fitPreferences": ["relaxed"],
+            },
+        )
+
+        self.assertEqual(len(result["product_refs"]), 1)
+        evidence = result["product_refs"][0]["matched_dimensions"]
+        self.assertEqual(
+            {(item["dimension"], item["evidence_source"]) for item in evidence},
+            {
+                ("category", "PRODUCT_CATEGORY"),
+                ("season", "PRODUCT_SEASON"),
+                ("style", "PRODUCT_STYLE_TAG"),
+                ("fitPreferences", "PRODUCT_FIT"),
+            },
+        )
 
     def test_bare_height_weight_pair_is_normalized_for_size_tool(self):
         normalized = normalize_measurement_query("明天面试想要显瘦 177 130 该怎么选")
@@ -134,7 +263,7 @@ class RecommendationServiceTests(unittest.TestCase):
             session_id="session-size-switch",
         )
         second = run_langgraph_agent(
-            "160 60kg呢？",
+            "160 60kg穿什么码呢？",
             chat_history=[
                 {
                     "user_query": "177 130 怎么穿？",
@@ -178,9 +307,10 @@ class RecommendationServiceTests(unittest.TestCase):
         refs = build_product_refs(
             candidates,
             {"intent": "size_recommendation"},
-            "明天面试想要显瘦 177 130 该怎么选",
+            "明天面试想要显瘦的外套，177 130 穿什么码",
             {},
             {"size_tool": {"recommended_size": "XL"}},
+            demand_intent={"version": "demand-intent-v2", "category": "外套"},
         )
 
         self.assertEqual(len(refs), 1)
@@ -215,9 +345,10 @@ class RecommendationServiceTests(unittest.TestCase):
         refs = build_product_refs(
             candidates,
             {"intent": "size_recommendation"},
-            "160 60kg呢？",
+            "160 60kg，T恤穿什么码？",
             {},
             {"size_tool": {"recommended_size": "M", "alternative": "L"}},
+            demand_intent={"version": "demand-intent-v2", "category": "T恤"},
         )
 
         self.assertEqual([ref["spu_id"] for ref in refs], [1002, 1001])
@@ -500,6 +631,7 @@ class RecommendationServiceTests(unittest.TestCase):
             "女性裙子推荐",
             {},
             {},
+            demand_intent={"version": "demand-intent-v2", "category": "半裙"},
         )
 
         self.assertEqual(refs[0]["spu_id"], 1120)
@@ -576,7 +708,7 @@ class RecommendationServiceTests(unittest.TestCase):
             },
         ]
 
-        refs = build_product_refs(
+        result = build_product_rerank_result(
             candidates,
             {"intent": "recommendation"},
             "想要显高显瘦的裤子",
@@ -584,9 +716,10 @@ class RecommendationServiceTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(refs[0]["spu_id"], 1001)
-        self.assertIn("版型或腰线更利于拉长比例", refs[0]["reason"])
-        self.assertIn("颜色、线条或版型更贴合显瘦需求", refs[0]["reason"])
+        self.assertEqual(result["product_refs"], [])
+        self.assertEqual(result["candidate_scores"][0]["spu_id"], 1001)
+        self.assertIn("版型或腰线更利于拉长比例", result["candidate_scores"][0]["score_parts"])
+        self.assertIn("颜色、线条或版型更贴合显瘦需求", result["candidate_scores"][0]["score_parts"])
 
     def test_synonym_profile_scores_student_and_visual_reasons(self):
         candidates = [
@@ -614,7 +747,7 @@ class RecommendationServiceTests(unittest.TestCase):
             },
         ]
 
-        refs = build_product_refs(
+        result = build_product_rerank_result(
             candidates,
             {"intent": "recommendation"},
             "适合大学生日常上课，别太贵，看起来显腿长一点，还要遮肉",
@@ -622,10 +755,11 @@ class RecommendationServiceTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(refs[0]["spu_id"], 1001)
-        self.assertIn("价格和风格更适合学生日常穿搭", refs[0]["reason"])
-        self.assertIn("版型或腰线更利于拉长比例", refs[0]["reason"])
-        self.assertIn("颜色、线条或版型更贴合显瘦需求", refs[0]["reason"])
+        self.assertEqual(result["product_refs"], [])
+        self.assertEqual(result["candidate_scores"][0]["spu_id"], 1001)
+        self.assertIn("价格和风格更适合学生日常穿搭", result["candidate_scores"][0]["score_parts"])
+        self.assertIn("版型或腰线更利于拉长比例", result["candidate_scores"][0]["score_parts"])
+        self.assertIn("颜色、线条或版型更贴合显瘦需求", result["candidate_scores"][0]["score_parts"])
 
     def test_java_demand_intent_affects_rerank_when_query_is_vague(self):
         candidates = [

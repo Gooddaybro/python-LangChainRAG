@@ -31,6 +31,11 @@ class UserContext(BaseModel):
     preferred_categories: list[str] = Field(default_factory=list, description="用户偏好的商品分类。")
     budget_min: float | None = Field(default=None, description="预算下限（人民币）。")
     budget_max: float | None = Field(default=None, description="预算上限（人民币）。")
+    recent_interest_spu_ids: list[int | str] = Field(default_factory=list, description="Java 汇总的近期兴趣 SPU。")
+    recent_cart_spu_ids: list[int | str] = Field(default_factory=list, description="Java 汇总的近期加购 SPU。")
+    recent_purchased_spu_ids: list[int | str] = Field(default_factory=list, description="Java 汇总的近期购买 SPU。")
+    behavior_preferred_categories: list[str] = Field(default_factory=list, description="Java 行为摘要中的偏好分类。")
+    behavior_preferred_styles: list[str] = Field(default_factory=list, description="Java 行为摘要中的偏好风格。")
 
 
 class ProductCandidate(BaseModel):
@@ -56,29 +61,61 @@ class ProductCandidate(BaseModel):
     main_image_url: str | None = Field(default=None, description="用于 Java 或前端展示的主图 URL。")
 
 
-class ProductRef(BaseModel):
-    spu_id: int | str = Field(..., description="助手回复中所引用的 Java SPU ID。")
-    sku_id: int | str = Field(..., description="助手回复中所引用的 Java SKU ID。")
-    reason: str = Field(..., description="对用户可见的该商品推荐理由。")
-    rank_score: float | None = Field(default=None, description="来自 Python 工作流的可选排名得分。")
+class SubjectMeasurements(BaseModel):
+    """Current-message measurements for the person being advised."""
+
+    model_config = ConfigDict(extra="allow")
+
+    heightCm: float | None = Field(default=None, description="归一化后的身高，单位厘米。")
+    weightKg: float | None = Field(default=None, description="归一化后的体重，单位公斤。")
+    originalText: str | None = Field(default=None, description="本轮消息中的原始测量文本。")
+    normalizedFrom: str | None = Field(default=None, description="单位归一化方式，例如 ASSUMED_JIN。")
+    subject: str | None = Field(default=None, description="咨询对象：SELF、OTHER 或 UNKNOWN。")
+    scope: str | None = Field(default=None, description="测量值的有效范围。")
+    source: str | None = Field(default=None, description="测量值来源。")
 
 
 class DemandIntent(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    version: str | None = Field(default=None, description="Java DemandIntent 契约版本。")
-    source: str | None = Field(default=None, description="意图解析来源，如 java-rule。")
-    rawQuery: str | None = Field(default=None, description="Java 解析时使用的原始用户问题。")
-    targetGender: str | None = Field(default=None, description="目标穿着性别，male 或 female。")
-    category: str | None = Field(default=None, description="Java 归一化后的硬筛选类目。")
-    scene: list[str] = Field(default_factory=list, description="场景偏好，如 commute。")
-    style: list[str] = Field(default_factory=list, description="风格偏好，如 minimal。")
-    budgetMax: float | None = Field(default=None, description="Java 解析出的预算上限。")
-    attributes: list[str] = Field(default_factory=list, description="显高、显瘦等属性偏好。")
-    hardFilters: list[str] = Field(default_factory=list, description="Java 已用于硬过滤的字段名。")
-    softPreferences: list[str] = Field(default_factory=list, description="Python 可用于排序解释的字段名。")
+    version: str = Field(default="demand-intent-v1", description="Java 侧需求解析契约版本。")
+    source: str = Field(default="java-rule", description="需求解析来源，当前由 Java 规则解析器生成。")
+    rawQuery: str = Field(default="", description="用户原始自然语言需求。")
+    requestType: str | None = Field(default=None, description="Java 维护的规范主任务。")
+    requestedCapabilities: list[str] = Field(default_factory=list, description="同一回答需要执行的附加能力。")
+    targetGender: str | None = Field(default=None, description="Java 解析出的目标性别硬过滤。")
+    category: str | None = Field(default=None, description="Java 商品库标准分类名。")
+    season: str | None = Field(default=None, description="Java 标准化后的季节代码。")
+    scene: list[str] = Field(default_factory=list, description="Java 解析出的场景偏好。")
+    style: list[str] = Field(default_factory=list, description="Java 解析出的风格偏好。")
+    fitPreferences: list[str] = Field(default_factory=list, description="版型偏好，例如 relaxed。")
+    budgetMax: int | float | None = Field(default=None, description="Java 解析出的预算上限。")
+    attributes: list[str] = Field(default_factory=list, description="Java 解析出的视觉或功能偏好。")
+    subjectMeasurements: SubjectMeasurements | None = Field(default=None, description="当前咨询对象的会话级测量值。")
+    hardFilters: list[str] = Field(default_factory=list, description="Java 已经用于候选池过滤的字段。")
+    softPreferences: list[str] = Field(default_factory=list, description="Python 可用于排序解释的偏好字段。")
     confidence: float | None = Field(default=None, description="Java 解析置信度。")
-    missingSlots: list[str] = Field(default_factory=list, description="仍缺失的关键槽位。")
+    missingSlots: list[str] = Field(default_factory=list, description="还缺少、可用于追问的槽位。")
+
+
+class MatchedDimension(BaseModel):
+    """Candidate fact that Java can independently verify against demand intent."""
+
+    dimension: str = Field(..., description="匹配的需求维度。")
+    requested_value: str = Field(..., description="需求中的标准值。")
+    candidate_value: str = Field(..., description="候选商品中的可复核值。")
+    evidence_source: str = Field(..., description="映射到 Java 候选字段的证据源。")
+
+
+class ProductRef(BaseModel):
+    spu_id: int | str = Field(..., description="助手回复中所引用的 Java SPU ID。")
+    sku_id: int | str = Field(..., description="助手回复中所引用的 Java SKU ID。")
+    reason: str = Field(..., description="对用户可见的该商品推荐理由。")
+    rank_score: float | None = Field(default=None, description="来自 Python 工作流的可选排名得分。")
+    matched_dimensions: list[MatchedDimension] = Field(
+        default_factory=list,
+        description="Java 可根据候选事实复核的显式需求匹配证据。",
+    )
 
 
 class SuggestedAction(BaseModel):

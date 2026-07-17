@@ -7,7 +7,12 @@ from clothing_assistant.agent.router import (
     INTENT_RECOMMENDATION,
     INTENT_SIZE_RECOMMENDATION,
 )
-from clothing_assistant.application.preference_parser import parse_preferences
+from clothing_assistant.application.preference_parser import (
+    append_unique,
+    build_empty_preferences,
+    merge_preferences,
+    parse_preferences,
+)
 
 
 RECOMMENDABLE_INTENTS = {
@@ -38,16 +43,8 @@ AVOID_TAG_TERMS = {
 QUERY_TERM_ALIASES = [
     (["裙子", "半裙", "半身裙", "百褶裙", "A字裙", "a字裙", "直筒裙"], ["裙", "半裙"]),
 ]
-
-DEMAND_TERM_ALIASES = {
-    "半裙": ["半裙", "裙"],
-    "commute": ["commute", "通勤"],
-    "minimal": ["minimal", "简洁", "百搭"],
-    "slim": ["slim", "显瘦", "修身", "遮肉"],
-    "tall": ["tall", "显高", "高腰", "拉长比例"],
-    "male": ["male", "男"],
-    "female": ["female", "女"],
-}
+WARM_MATCH_TERMS = ["warm", "保暖", "厚款", "厚实", "羊毛", "羽绒", "加绒", "针织"]
+RAG_FACT_FORBIDDEN_TERMS = ["sku", "价格", "库存", "有货", "无货", "下架", "上架", "元"]
 
 
 def normalize_text(value: Any) -> str:
@@ -56,6 +53,10 @@ def normalize_text(value: Any) -> str:
 
 def normalize_size(value: Any) -> str:
     return str(value or "").strip().upper()
+
+
+def normalize_identifier(value: Any) -> str:
+    return str(value).strip() if value is not None else ""
 
 
 def as_number(value: Any) -> float | None:
@@ -92,18 +93,19 @@ def collect_query_terms(user_query: str, user_context: dict[str, Any], preferenc
         "显瘦",
         "宽松",
         "修身",
+        "外套",
+        "夹克",
+        "T恤",
+        "衬衫",
+        "卫衣",
+        "裤子",
+        "西装",
+        "半裙",
+        "短裤",
         "夏",
         "冬",
         "春",
         "秋",
-        "裙",
-        "半裙",
-        "外套",
-        "衬衫",
-        "裤",
-        "长裤",
-        "牛仔裤",
-        "休闲裤",
     ]:
         if value.lower() in normalized_query:
             terms.add(value.lower())
@@ -125,44 +127,26 @@ def collect_query_terms(user_query: str, user_context: dict[str, Any], preferenc
     return terms
 
 
-def collect_demand_intent_terms(demand_intent: dict[str, Any] | None) -> set[str]:
-    if not demand_intent:
-        return set()
+def iterable_candidate_values(value: Any) -> list[Any]:
+    if value is None:
+        return []
 
-    terms = set()
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
 
-    for key in ["targetGender", "category"]:
-        value = demand_intent.get(key)
-        if value:
-            add_term_with_aliases(terms, value)
-
-    for key in ["scene", "style", "attributes"]:
-        for value in demand_intent.get(key) or []:
-            add_term_with_aliases(terms, value)
-
-    return terms
-
-
-def add_term_with_aliases(terms: set[str], value: Any) -> None:
-    normalized = normalize_text(value)
-    if not normalized:
-        return
-
-    terms.add(normalized)
-    for alias in DEMAND_TERM_ALIASES.get(normalized, []):
-        terms.add(normalize_text(alias))
+    return [value]
 
 
 def candidate_terms(candidate: dict[str, Any]) -> set[str]:
     terms = set()
 
-    for key in ["name", "category", "color", "material", "fit_type"]:
+    for key in ["name", "category", "category_name", "color", "material", "materials", "fit_type"]:
         value = normalize_text(candidate.get(key))
         if value:
             terms.add(value)
 
-    for key in ["season", "style_tags", "attribute_tags", "visual_effect_tags", "occasion_tags"]:
-        for value in candidate.get(key) or []:
+    for key in ["season", "seasons", "style_tags", "attribute_tags", "visual_effect_tags", "occasion_tags"]:
+        for value in iterable_candidate_values(candidate.get(key)):
             normalized = normalize_text(value)
             if normalized:
                 terms.add(normalized)
@@ -174,21 +158,213 @@ def candidate_text(candidate: dict[str, Any]) -> str:
     return " ".join(candidate_terms(candidate))
 
 
+def normalized_values(value: Any) -> list[str]:
+    return [normalized for item in iterable_candidate_values(value) if (normalized := normalize_text(item))]
+
+
+def candidate_tag_values(candidate: dict[str, Any], key: str) -> list[str]:
+    """Return Java-verifiable tag values, stripping an optional `name:` prefix."""
+    values = []
+    for raw_value in iterable_candidate_values(candidate.get(key)):
+        value = normalize_text(raw_value)
+        if not value:
+            continue
+        values.append(value.split(":", 1)[1].strip() if ":" in value else value)
+    return values
+
+
+def demand_list(demand_intent: dict[str, Any], camel_key: str, snake_key: str | None = None) -> list[str]:
+    value = demand_intent.get(camel_key)
+    if value is None and snake_key:
+        value = demand_intent.get(snake_key)
+    return normalized_values(value)
+
+
+def append_match(
+    matches: list[dict[str, str]],
+    dimension: str,
+    requested_value: Any,
+    candidate_value: Any,
+    evidence_source: str,
+) -> None:
+    requested = normalize_text(requested_value)
+    candidate = normalize_text(candidate_value)
+    if not requested or not candidate:
+        return
+    matches.append(
+        {
+            "dimension": dimension,
+            "requested_value": requested,
+            "candidate_value": candidate,
+            "evidence_source": evidence_source,
+        }
+    )
+
+
+def query_fallback_demand(
+    user_query: str,
+    candidate: dict[str, Any],
+    preferences: dict[str, Any],
+) -> dict[str, Any]:
+    """Build conservative v1/no-contract evidence only from explicit query text."""
+    query = normalize_text(user_query)
+    category = normalize_text(candidate.get("category") or candidate.get("category_name"))
+    season = None
+    for terms, code in [
+        (("春天", "春季"), "spring"),
+        (("夏天", "夏季"), "summer"),
+        (("秋天", "秋季", "秋冬"), "autumn"),
+        (("冬天", "冬季", "秋冬"), "winter"),
+    ]:
+        if any(term in query for term in terms):
+            season = code
+            break
+
+    styles = []
+    for terms, code in [
+        (("休闲", "轻松"), "casual"),
+        (("简约", "极简"), "minimal"),
+        (("正式", "商务"), "formal"),
+    ]:
+        if any(term in query for term in terms):
+            styles.append(code)
+
+    fits = []
+    if "宽松" in query or "轻松一点" in query:
+        fits.append("relaxed")
+    if "修身" in query:
+        fits.append("slim")
+
+    return {
+        "category": category if category and category in query else None,
+        "season": season,
+        "style": styles,
+        "fitPreferences": fits,
+        "attributes": [value for value in candidate_tag_values(candidate, "attribute_tags") if value in query],
+        "budgetMax": preferences.get("budget_max"),
+    }
+
+
+def build_matched_dimensions(
+    candidate: dict[str, Any],
+    demand_intent: dict[str, Any] | None,
+    user_query: str,
+    preferences: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Build only structured facts that Java can independently verify."""
+    demand = demand_intent if isinstance(demand_intent, dict) and demand_intent else query_fallback_demand(
+        user_query, candidate, preferences
+    )
+    matches: list[dict[str, str]] = []
+
+    requested_category = normalize_text(demand.get("category"))
+    candidate_category = normalize_text(candidate.get("category") or candidate.get("category_name"))
+    if requested_category and requested_category == candidate_category:
+        append_match(matches, "category", requested_category, candidate_category, "PRODUCT_CATEGORY")
+
+    requested_season = normalize_text(demand.get("season"))
+    candidate_seasons = normalized_values(candidate.get("season")) + normalized_values(candidate.get("seasons"))
+    if requested_season and requested_season in candidate_seasons:
+        append_match(matches, "season", requested_season, requested_season, "PRODUCT_SEASON")
+
+    candidate_styles = normalized_values(candidate.get("style_tags")) + candidate_tag_values(
+        candidate, "attribute_tags"
+    )
+    for requested_style in demand_list(demand, "style"):
+        if requested_style in candidate_styles:
+            append_match(matches, "style", requested_style, requested_style, "PRODUCT_STYLE_TAG")
+
+    candidate_fit = normalize_text(candidate.get("fit_type"))
+    for requested_fit in demand_list(demand, "fitPreferences", "fit_preferences"):
+        if requested_fit == candidate_fit:
+            append_match(matches, "fitPreferences", requested_fit, candidate_fit, "PRODUCT_FIT")
+
+    candidate_attributes = candidate_tag_values(candidate, "attribute_tags")
+    for requested_attribute in demand_list(demand, "attributes"):
+        if requested_attribute in candidate_attributes:
+            append_match(
+                matches,
+                "attributes",
+                requested_attribute,
+                requested_attribute,
+                "PRODUCT_ATTRIBUTE",
+            )
+
+    requested_budget = as_number(demand.get("budgetMax") or demand.get("budget_max"))
+    candidate_price = as_number(candidate.get("sale_price"))
+    if requested_budget is not None and candidate_price is not None and candidate_price <= requested_budget:
+        append_match(
+            matches,
+            "budgetMax",
+            format_amount(requested_budget),
+            format_amount(candidate_price),
+            "PRODUCT_PRICE",
+        )
+
+    return matches
+
+
+def is_winter_warm_query(preferences: dict[str, Any]) -> bool:
+    return "warm" in (preferences.get("style_tags") or []) or "winter" in (preferences.get("season") or [])
+
+
+def candidate_has_winter_season(candidate: dict[str, Any]) -> bool:
+    season_values = iterable_candidate_values(candidate.get("season")) + iterable_candidate_values(candidate.get("seasons"))
+    return any(normalize_text(value) == "winter" for value in season_values)
+
+
+def candidate_has_warm_signal(candidate: dict[str, Any]) -> bool:
+    text = candidate_text(candidate)
+    return any(term in text for term in WARM_MATCH_TERMS)
+
+
+def preferences_from_demand_intent(demand_intent: dict[str, Any] | None) -> dict[str, Any]:
+    """Map Java's safe intent contract onto existing rerank preference keys."""
+    preferences = build_empty_preferences()
+    if not isinstance(demand_intent, dict):
+        return preferences
+
+    append_unique(preferences["scene"], demand_intent.get("scene") or [])
+    append_unique(preferences["style_tags"], demand_intent.get("style") or [])
+    append_unique(preferences["season"], iterable_candidate_values(demand_intent.get("season")))
+
+    attributes = {normalize_text(value) for value in demand_intent.get("attributes") or []}
+    if {"保暖", "厚款"} & attributes:
+        append_unique(preferences["style_tags"], ["warm"])
+        append_unique(preferences["season"], ["winter"])
+    if "平价" in attributes:
+        preferences["price_preference"] = "budget"
+    if "显瘦" in attributes:
+        append_unique(preferences["visual_goals"], ["slimmer"])
+    if "显高" in attributes:
+        append_unique(preferences["visual_goals"], ["taller"])
+
+    budget_max = as_number(demand_intent.get("budgetMax") or demand_intent.get("budget_max"))
+    if budget_max is not None:
+        preferences["budget_max"] = int(budget_max)
+
+    return preferences
+
+
+def resolve_preferences(user_query: str, demand_intent: dict[str, Any] | None = None) -> dict[str, Any]:
+    return merge_preferences(parse_preferences(user_query), preferences_from_demand_intent(demand_intent))
+
+
 def collect_preferred_colors(user_context: dict[str, Any], preferences: dict[str, Any]) -> set[str]:
     colors = {normalize_text(value) for value in user_context.get("preferred_colors") or [] if value}
     colors.update(normalize_text(value) for value in preferences.get("preferred_colors") or [] if value)
     return colors
 
 
-def resolve_budget_max(
-    user_context: dict[str, Any],
-    preferences: dict[str, Any],
-    demand_intent: dict[str, Any] | None = None,
-) -> float | None:
-    demand_budget = as_number((demand_intent or {}).get("budgetMax"))
-    if demand_budget is not None:
-        return demand_budget
+def collect_context_ids(user_context: dict[str, Any], key: str) -> set[str]:
+    return {normalize_identifier(value) for value in user_context.get(key) or [] if normalize_identifier(value)}
 
+
+def collect_context_terms(user_context: dict[str, Any], key: str) -> set[str]:
+    return {normalize_text(value) for value in user_context.get(key) or [] if normalize_text(value)}
+
+
+def resolve_budget_max(user_context: dict[str, Any], preferences: dict[str, Any]) -> float | None:
     context_budget = as_number(user_context.get("budget_max"))
     preference_budget = as_number(preferences.get("budget_max"))
     return context_budget if context_budget is not None else preference_budget
@@ -264,6 +440,7 @@ def build_reason(
     recommended_size: str | None,
     alternative_size: str | None,
     score_parts: list[str],
+    rag_explanation_parts: list[str] | None = None,
 ) -> str:
     name = candidate.get("name") or "这件商品"
     details = []
@@ -278,11 +455,68 @@ def build_reason(
         details.append("当前候选显示有库存")
 
     details.extend(score_parts)
+    details.extend(rag_explanation_parts or [])
 
     if not details:
         details.append("符合本轮 Java 候选商品条件")
 
     return f"{name}：" + "，".join(details) + "。"
+
+
+def summarize_rag_content(content: str, max_length: int = 48) -> str:
+    summary = " ".join(str(content or "").split())
+    if len(summary) <= max_length:
+        return summary
+
+    return summary[:max_length].rstrip("，。,. ") + "..."
+
+
+def extract_rag_explanation_parts(tool_results: dict[str, Any]) -> list[str]:
+    rag_result = tool_results.get("rag_tool") or {}
+    chunks = rag_result.get("retrieved_chunks") or []
+    explanation_parts = []
+
+    for chunk in chunks:
+        content = str(chunk.get("content") or "")
+        normalized = normalize_text(content)
+        if not content.strip():
+            continue
+        if any(term in normalized for term in RAG_FACT_FORBIDDEN_TERMS):
+            continue
+        explanation_parts.append(f"RAG 知识提示：{summarize_rag_content(content)}")
+        break
+
+    return explanation_parts
+
+
+def behavior_context_score(candidate: dict[str, Any], user_context: dict[str, Any], score_parts: list[str]) -> float:
+    score = 0.0
+    candidate_spu_id = normalize_identifier(candidate.get("spu_id"))
+
+    if candidate_spu_id and candidate_spu_id in collect_context_ids(user_context, "recent_interest_spu_ids"):
+        score += 0.12
+        score_parts.append("近期行为显示你关注过类似商品")
+
+    if candidate_spu_id and candidate_spu_id in collect_context_ids(user_context, "recent_cart_spu_ids"):
+        score += 0.16
+        score_parts.append("你近期有类似加购意图")
+
+    if candidate_spu_id and candidate_spu_id in collect_context_ids(user_context, "recent_purchased_spu_ids"):
+        score += 0.08
+        score_parts.append("与你近期购买偏好相近")
+
+    candidate_category = normalize_text(candidate.get("category") or candidate.get("category_name"))
+    if candidate_category and candidate_category in collect_context_terms(user_context, "behavior_preferred_categories"):
+        score += 0.08
+        score_parts.append("匹配近期浏览或购买分类")
+
+    preferred_styles = collect_context_terms(user_context, "behavior_preferred_styles")
+    candidate_styles = {normalize_text(value) for value in candidate.get("style_tags") or [] if value}
+    if preferred_styles and candidate_styles & preferred_styles:
+        score += 0.08
+        score_parts.append("匹配近期偏好的风格")
+
+    return score
 
 
 def score_candidate(
@@ -292,7 +526,6 @@ def score_candidate(
     alternative_size: str | None,
     user_context: dict[str, Any],
     preferences: dict[str, Any],
-    demand_intent: dict[str, Any] | None = None,
 ) -> tuple[float, list[str]]:
     score = 0.0
     score_parts = []
@@ -315,7 +548,7 @@ def score_candidate(
         score_parts.append("风格、季节或场景标签匹配")
 
     sale_price = as_number(candidate.get("sale_price"))
-    budget_max = resolve_budget_max(user_context, preferences, demand_intent)
+    budget_max = resolve_budget_max(user_context, preferences)
     if sale_price is not None and budget_max is not None and sale_price > budget_max:
         return -1.0, []
 
@@ -335,7 +568,21 @@ def score_candidate(
         score += 0.1
         score_parts.append(f"{candidate.get('color')}匹配颜色偏好")
 
+    score += behavior_context_score(candidate, user_context, score_parts)
+
     text = candidate_text(candidate)
+
+    if is_winter_warm_query(preferences):
+        winter_match = candidate_has_winter_season(candidate)
+        warm_match = candidate_has_warm_signal(candidate)
+        if not winter_match and not warm_match:
+            return -1.0, []
+        if winter_match:
+            score += 0.3
+            score_parts.append("匹配冬季需求")
+        if warm_match:
+            score += 0.35
+            score_parts.append("材质或厚度更适合保暖")
 
     if preferences.get("visual_goals"):
         for goal in preferences["visual_goals"]:
@@ -374,26 +621,58 @@ def build_product_refs(
     user_query: str,
     user_context: dict[str, Any] | None,
     tool_results: dict[str, Any] | None,
-    demand_intent: dict[str, Any] | None = None,
     limit: int = 3,
+    demand_intent: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Select refs only from Java candidates; never invent product facts."""
+    return build_product_rerank_result(
+        candidates,
+        intent_result,
+        user_query,
+        user_context,
+        tool_results,
+        limit=limit,
+        demand_intent=demand_intent,
+    )["product_refs"]
+
+
+def build_product_rerank_result(
+    candidates: list[dict[str, Any]] | None,
+    intent_result: dict[str, Any] | None,
+    user_query: str,
+    user_context: dict[str, Any] | None,
+    tool_results: dict[str, Any] | None,
+    limit: int = 3,
+    demand_intent: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Rank Java-provided candidates and expose debug evidence for the AI layer."""
+    preferences = resolve_preferences(user_query, demand_intent)
     if not candidates:
-        return []
+        return {
+            "product_refs": [],
+            "semantic_preferences": preferences,
+            "candidate_scores": [],
+            "recommendation_source": "java_candidates_empty",
+        }
 
     intent = (intent_result or {}).get("intent")
     if intent not in RECOMMENDABLE_INTENTS:
-        return []
+        return {
+            "product_refs": [],
+            "semantic_preferences": preferences,
+            "candidate_scores": [],
+            "recommendation_source": "not_recommendable_intent",
+        }
 
     user_context = user_context or {}
     tool_results = tool_results or {}
-    preferences = parse_preferences(user_query)
     recommended_size = get_recommended_size(tool_results)
     alternative_size = get_alternative_size(tool_results)
     query_terms = collect_query_terms(user_query, user_context, preferences)
-    query_terms.update(collect_demand_intent_terms(demand_intent))
+    rag_explanation_parts = extract_rag_explanation_parts(tool_results)
 
     scored_candidates = []
+    candidate_scores = []
     seen_skus = set()
 
     for index, candidate in enumerate(candidates):
@@ -409,25 +688,58 @@ def build_product_refs(
             alternative_size,
             user_context,
             preferences,
-            demand_intent,
         )
-        if score < 0:
-            continue
+        matched_dimensions = build_matched_dimensions(
+            candidate,
+            demand_intent,
+            user_query,
+            preferences,
+        )
+        selected = score >= 0 and bool(matched_dimensions)
 
-        seen_skus.add(sku_id)
-        scored_candidates.append((score, index, candidate, score_parts))
+        candidate_scores.append(
+            {
+                "spu_id": spu_id,
+                "sku_id": sku_id,
+                "rank_score": round(score, 4),
+                "selected": selected,
+                "score_parts": score_parts,
+                "matched_dimensions": matched_dimensions,
+            }
+        )
+
+        if selected:
+            seen_skus.add(sku_id)
+            scored_candidates.append((score, index, candidate, score_parts, matched_dimensions))
 
     scored_candidates.sort(key=lambda item: (-item[0], item[1]))
+    candidate_scores.sort(key=lambda item: (-item["rank_score"], str(item["spu_id"]), str(item["sku_id"])))
     refs = []
 
-    for score, _, candidate, score_parts in scored_candidates[:limit]:
+    for score, _, candidate, score_parts, matched_dimensions in scored_candidates[:limit]:
         refs.append(
             {
                 "spu_id": candidate["spu_id"],
                 "sku_id": candidate["sku_id"],
-                "reason": build_reason(candidate, recommended_size, alternative_size, score_parts),
+                "reason": build_reason(
+                    candidate,
+                    recommended_size,
+                    alternative_size,
+                    score_parts,
+                    rag_explanation_parts=rag_explanation_parts,
+                ),
                 "rank_score": round(score, 4),
+                "matched_dimensions": matched_dimensions,
             }
         )
 
-    return refs
+    selected_ref_keys = {(ref["spu_id"], ref["sku_id"]) for ref in refs}
+    for candidate_score in candidate_scores:
+        candidate_score["selected"] = (candidate_score["spu_id"], candidate_score["sku_id"]) in selected_ref_keys
+
+    return {
+        "product_refs": refs,
+        "semantic_preferences": preferences,
+        "candidate_scores": candidate_scores,
+        "recommendation_source": "java_candidates_with_ai_rerank",
+    }

@@ -725,6 +725,14 @@ class ApiTests(unittest.TestCase):
                 "sku_id": 2001,
                 "reason": "尺码和场景匹配。",
                 "rank_score": 0.95,
+                "matched_dimensions": [
+                    {
+                        "dimension": "category",
+                        "requested_value": "外套",
+                        "candidate_value": "外套",
+                        "evidence_source": "PRODUCT_CATEGORY",
+                    }
+                ],
             }
         ]
         fake_result = {

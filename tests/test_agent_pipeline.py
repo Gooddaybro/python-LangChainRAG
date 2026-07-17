@@ -65,6 +65,16 @@ def fake_size_runner(query, chat_history=None):
 
 
 def fake_answer_generator(state):
+    refs = state.get("product_refs") or []
+    if refs:
+        selected = {(ref["spu_id"], ref["sku_id"]) for ref in refs}
+        names = [
+            candidate["name"]
+            for candidate in state.get("candidates") or []
+            if (candidate.get("spu_id"), candidate.get("sku_id")) in selected
+        ]
+        if names:
+            return f"推荐商品：{'、'.join(names)}。", "fake prompt"
     return "fake answer", "fake prompt"
 
 

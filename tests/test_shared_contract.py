@@ -4,10 +4,13 @@ from pathlib import Path
 
 from clothing_assistant.api.schemas import (
     ChatHistoryItem,
+    DemandIntent,
+    MatchedDimension,
     ProductCandidate,
     ProductRef,
     PythonChatRequest,
     PythonChatResponse,
+    SubjectMeasurements,
     SuggestedAction,
     UserContext,
 )
@@ -41,8 +44,11 @@ class SharedContractTests(unittest.TestCase):
         self.assert_model_fields_match_contract(ChatHistoryItem, "chat_history_item")
         self.assert_model_fields_match_contract(UserContext, "user_context")
         self.assert_model_fields_match_contract(ProductCandidate, "product_candidate")
+        self.assert_model_fields_match_contract(DemandIntent, "demand_intent")
+        self.assert_model_fields_match_contract(SubjectMeasurements, "subject_measurements")
 
     def test_python_response_models_match_shared_contract(self):
         self.assert_model_fields_match_contract(PythonChatResponse, "python_chat_response")
         self.assert_model_fields_match_contract(ProductRef, "product_ref")
+        self.assert_model_fields_match_contract(MatchedDimension, "matched_dimension")
         self.assert_model_fields_match_contract(SuggestedAction, "suggested_action")
