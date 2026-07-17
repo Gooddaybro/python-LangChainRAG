@@ -361,7 +361,9 @@ def intent_router(user_query, demand_intent=None):
         )
 
     has_measurements = has_measurement_signal(normalized_query)
-    asks_for_size = contains_any(normalized_query, EXPLICIT_SIZE_KEYWORDS)
+    asks_for_size = contains_any(normalized_query, SIZE_KEYWORDS) or (
+        has_measurements and contains_any(normalized_query, ["适合我", "合适吗", "合不合适"])
+    )
     asks_for_outfit = contains_any(normalized_query, OUTFIT_ADVICE_KEYWORDS)
 
     if asks_for_outfit:
