@@ -156,6 +156,9 @@ CHAT_KEYWORDS = [
     "你能做什么",
 ]
 
+PRODUCT_REFERENCE_KEYWORDS = ["这件", "这款", "这个商品", "这件衣服"]
+PRODUCT_FIT_QUESTION_KEYWORDS = ["合适吗", "适合吗", "适不适合"]
+
 OUTFIT_ADVICE_KEYWORDS = [
     "怎么穿",
     "如何穿",
@@ -424,6 +427,17 @@ def intent_router(user_query, demand_intent=None):
             "product",
             need_history,
             "命中商品知识、颜色、洗涤或季节适配相关关键词。",
+            "PRODUCT_QA",
+        )
+
+    if contains_any(normalized_query, PRODUCT_REFERENCE_KEYWORDS) and contains_any(
+        normalized_query, PRODUCT_FIT_QUESTION_KEYWORDS
+    ):
+        return build_router_result(
+            INTENT_PRODUCT_QA,
+            "product",
+            need_history,
+            "命中指定商品的适用性问题。",
             "PRODUCT_QA",
         )
 

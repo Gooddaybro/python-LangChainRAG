@@ -5,9 +5,63 @@
 并且 Java 开发者在构建 DTO 时会使用这些描述。
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class DemandIntentParseHistoryItem(BaseModel):
+    """One complete recent turn supplied only as soft context."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    user_query: str = Field(alias="userQuery")
+    assistant_answer: str = Field(alias="assistantAnswer")
+
+
+class DemandIntentParseRequest(BaseModel):
+    """Internal Java-to-Python semantic patch request."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_version: str = Field(alias="schemaVersion", pattern=r"^1\.0$")
+    request_id: str = Field(alias="requestId", min_length=1, max_length=128)
+    session_id: str = Field(alias="sessionId", min_length=1, max_length=128)
+    current_message: str = Field(alias="currentMessage", min_length=1)
+    current_demand: dict[str, Any] = Field(alias="currentDemand")
+    deterministic_patch: dict[str, Any] = Field(alias="deterministicPatch")
+    locked_slots: list[str] = Field(alias="lockedSlots")
+    matched_fragments: list[str] = Field(alias="matchedFragments")
+    unresolved_text: str = Field(alias="unresolvedText")
+    recent_history: list[DemandIntentParseHistoryItem] = Field(
+        default_factory=list, alias="recentHistory", max_length=3
+    )
+    pending_clarification: dict[str, Any] | None = Field(
+        default=None, alias="pendingClarification"
+    )
+
+    def service_dict(self) -> dict[str, Any]:
+        return self.model_dump(by_alias=True, exclude_none=True)
+
+
+class RagRebuildRequest(BaseModel):
+    """Internal request to rebuild the global local-knowledge index."""
+
+    task_id: str = Field(alias="taskId", min_length=1, max_length=64)
+    source: Literal["LOCAL_GLOBAL_KNOWLEDGE"]
+
+
+class RagRebuildResponse(BaseModel):
+    """Stable result returned to the Java AI-task worker."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: str = Field(alias="taskId")
+    index_version: str = Field(alias="indexVersion")
+    file_count: int = Field(alias="fileCount", ge=0)
+    chunk_count: int = Field(alias="chunkCount", ge=0)
+    content_digest: str = Field(alias="contentDigest")
+    replayed: bool
 
 
 class ChatHistoryItem(BaseModel):
@@ -133,7 +187,10 @@ class PythonChatRequest(BaseModel):
     user_context: UserContext = Field(default_factory=UserContext, description="来自 Java 的只读用户画像上下文。")
     candidates: list[ProductCandidate] = Field(default_factory=list, description="Java 为此轮对话过滤出的 SKU 候选列表。")
     demand_intent: DemandIntent | None = Field(default=None, description="Java 统一解析出的需求意图。")
-    debug: bool = Field(default=False, description="是否包含内部 LangGraph 调试数据。")
+    debug: bool = Field(
+        default=False,
+        description="是否请求内部 LangGraph 调试数据；仅当本地服务启用 DEBUG_RESPONSE_ENABLED=true 时才会返回，否则会被抑制。",
+    )
 
     @field_validator("request_id", "session_id", "query")
     @classmethod
@@ -151,12 +208,6 @@ class PythonChatRequest(BaseModel):
 
     def candidate_dicts(self) -> list[dict[str, Any]]:
         return [item.model_dump(exclude_none=True, exclude_unset=True) for item in self.candidates]
-
-    def demand_intent_dict(self) -> dict[str, Any] | None:
-        if self.demand_intent is None:
-            return None
-
-        return self.demand_intent.model_dump(exclude_none=True, exclude_unset=True)
 
 
 class PythonChatResponse(BaseModel):
