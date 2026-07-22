@@ -601,7 +601,7 @@ class ApiTests(unittest.TestCase):
             demand_intent=None,
         )
 
-    def test_chat_passes_demand_intent_to_langgraph_executor(self):
+    def test_chat_passes_v3_demand_intent_to_langgraph_executor(self):
         fake_result = {
             "answer": "fake answer",
             "debug": {
@@ -610,25 +610,42 @@ class ApiTests(unittest.TestCase):
             },
         }
         demand_intent = {
-            "version": "demand-intent-v1",
-            "source": "java-rule",
-            "rawQuery": "女性裙子推荐",
-            "targetGender": "female",
-            "category": "半裙",
-            "scene": [],
-            "style": [],
-            "budgetMax": None,
-            "attributes": [],
-            "hardFilters": ["targetGender", "category"],
+            "version": "demand-intent-v3",
+            "requestType": "OUTFIT_ADVICE",
+            "requestedCapabilities": ["RECOMMENDATION"],
+            "hardFilters": [
+                {
+                    "id": "turn-7-category",
+                    "field": "category",
+                    "operator": "EQUALS",
+                    "values": ["半裙"],
+                    "strength": "HARD",
+                    "origin": "USER_EXPLICIT",
+                    "originTurnId": "turn-7",
+                    "derivedFromConstraintId": None,
+                    "scope": "CURRENT_SESSION",
+                    "weight": None,
+                }
+            ],
             "softPreferences": [],
-            "confidence": 0.65,
-            "missingSlots": [],
+            "subjectMeasurements": {
+                "heightCm": 168,
+                "weightKg": 55,
+                "originalText": "168cm 55kg",
+                "normalizedFrom": "METRIC",
+                "subject": "SELF",
+                "scope": "CURRENT_SESSION",
+                "source": "USER_EXPLICIT",
+            },
         }
 
-        with patch(
-            "clothing_assistant.api.app.run_langgraph_agent",
-            return_value=fake_result,
-        ) as mock_run:
+        with (
+            patch("clothing_assistant.api.app.is_internal_auth_required", return_value=False),
+            patch(
+                "clothing_assistant.api.app.run_langgraph_agent",
+                return_value=fake_result,
+            ) as mock_run,
+        ):
             response = self.client.post(
                 "/chat",
                 json={
@@ -641,8 +658,9 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         called_kwargs = mock_run.call_args.kwargs
-        self.assertEqual(called_kwargs["demand_intent"]["targetGender"], "female")
-        self.assertEqual(called_kwargs["demand_intent"]["category"], "半裙")
+        self.assertEqual(called_kwargs["demand_intent"]["version"], "demand-intent-v3")
+        self.assertEqual(called_kwargs["demand_intent"]["hardFilters"][0]["values"], ["半裙"])
+        self.assertEqual(called_kwargs["demand_intent"]["subjectMeasurements"]["heightCm"], 168)
 
     def test_chat_hides_debug_when_disabled(self):
         fake_result = {
@@ -725,6 +743,7 @@ class ApiTests(unittest.TestCase):
                 "sku_id": 2001,
                 "reason": "尺码和场景匹配。",
                 "rank_score": 0.95,
+                "outfit_role": "OUTER",
                 "matched_dimensions": [
                     {
                         "dimension": "category",
@@ -744,7 +763,10 @@ class ApiTests(unittest.TestCase):
             },
         }
 
-        with patch("clothing_assistant.api.app.run_langgraph_agent", return_value=fake_result):
+        with (
+            patch("clothing_assistant.api.app.is_internal_auth_required", return_value=False),
+            patch("clothing_assistant.api.app.run_langgraph_agent", return_value=fake_result),
+        ):
             response = self.client.post(
                 "/chat",
                 json={

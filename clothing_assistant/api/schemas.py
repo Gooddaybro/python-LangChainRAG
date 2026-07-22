@@ -129,27 +129,38 @@ class SubjectMeasurements(BaseModel):
     source: str | None = Field(default=None, description="测量值来源。")
 
 
+class IntentConstraint(BaseModel):
+    """One v3 demand condition with provenance and filtering strength."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    field: str
+    operator: str
+    values: list[str] = Field(default_factory=list)
+    strength: str
+    origin: str
+    originTurnId: str | None = None
+    derivedFromConstraintId: str | None = None
+    scope: str | None = None
+    weight: float | None = None
+
+
 class DemandIntent(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    version: str = Field(default="demand-intent-v1", description="Java 侧需求解析契约版本。")
-    source: str = Field(default="java-rule", description="需求解析来源，当前由 Java 规则解析器生成。")
-    rawQuery: str = Field(default="", description="用户原始自然语言需求。")
+    version: str = Field(default="demand-intent-v3", description="Java 侧需求解析契约版本。")
     requestType: str | None = Field(default=None, description="Java 维护的规范主任务。")
     requestedCapabilities: list[str] = Field(default_factory=list, description="同一回答需要执行的附加能力。")
-    targetGender: str | None = Field(default=None, description="Java 解析出的目标性别硬过滤。")
-    category: str | None = Field(default=None, description="Java 商品库标准分类名。")
-    season: str | None = Field(default=None, description="Java 标准化后的季节代码。")
-    scene: list[str] = Field(default_factory=list, description="Java 解析出的场景偏好。")
-    style: list[str] = Field(default_factory=list, description="Java 解析出的风格偏好。")
-    fitPreferences: list[str] = Field(default_factory=list, description="版型偏好，例如 relaxed。")
-    budgetMax: int | float | None = Field(default=None, description="Java 解析出的预算上限。")
-    attributes: list[str] = Field(default_factory=list, description="Java 解析出的视觉或功能偏好。")
+    hardFilters: list[IntentConstraint] = Field(
+        default_factory=list,
+        description="Java 已经用于候选池过滤的硬约束。",
+    )
+    softPreferences: list[IntentConstraint] = Field(
+        default_factory=list,
+        description="Python 可用于排序解释的软偏好。",
+    )
     subjectMeasurements: SubjectMeasurements | None = Field(default=None, description="当前咨询对象的会话级测量值。")
-    hardFilters: list[str] = Field(default_factory=list, description="Java 已经用于候选池过滤的字段。")
-    softPreferences: list[str] = Field(default_factory=list, description="Python 可用于排序解释的偏好字段。")
-    confidence: float | None = Field(default=None, description="Java 解析置信度。")
-    missingSlots: list[str] = Field(default_factory=list, description="还缺少、可用于追问的槽位。")
 
 
 class MatchedDimension(BaseModel):
@@ -166,6 +177,7 @@ class ProductRef(BaseModel):
     sku_id: int | str = Field(..., description="助手回复中所引用的 Java SKU ID。")
     reason: str = Field(..., description="对用户可见的该商品推荐理由。")
     rank_score: float | None = Field(default=None, description="来自 Python 工作流的可选排名得分。")
+    outfit_role: str | None = Field(default=None, description="该商品在组合穿搭中的角色。")
     matched_dimensions: list[MatchedDimension] = Field(
         default_factory=list,
         description="Java 可根据候选事实复核的显式需求匹配证据。",
