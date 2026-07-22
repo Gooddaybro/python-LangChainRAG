@@ -45,6 +45,10 @@ QUERY_TERM_ALIASES = [
 ]
 WARM_MATCH_TERMS = ["warm", "保暖", "厚款", "厚实", "羊毛", "羽绒", "加绒", "针织"]
 RAG_FACT_FORBIDDEN_TERMS = ["sku", "价格", "库存", "有货", "无货", "下架", "上架", "元"]
+REJECTION_HARD_FILTER = "HARD_FILTER_MISMATCH"
+REJECTION_SIZE = "SIZE_MISMATCH"
+REJECTION_LOW_STYLE = "LOW_STYLE_SCORE"
+REJECTION_MISSING_EVIDENCE = "MISSING_REQUIRED_EVIDENCE"
 
 
 def normalize_text(value: Any) -> str:
@@ -162,20 +166,44 @@ def normalized_values(value: Any) -> list[str]:
     return [normalized for item in iterable_candidate_values(value) if (normalized := normalize_text(item))]
 
 
-def v3_constraint_values(demand_intent: dict[str, Any], field: str) -> list[Any] | None:
-    """Return authoritative v3 values for one field, or None when no constraint declares it."""
+def v3_constraint_values(
+    demand_intent: dict[str, Any],
+    field: str,
+    collections: tuple[str, ...] = ("hardFilters", "softPreferences"),
+) -> list[Any] | None:
+    """Return values from selected v3 partitions, or None when they do not declare the field."""
     if normalize_text(demand_intent.get("version")) != "demand-intent-v3":
         return None
 
     values = []
     found = False
-    for collection in ("hardFilters", "softPreferences"):
+    for collection in collections:
         for constraint in demand_intent.get(collection) or []:
             if not isinstance(constraint, dict) or constraint.get("field") != field:
                 continue
             found = True
             values.extend(iterable_candidate_values(constraint.get("values")))
     return values if found else None
+
+
+def preference_values(
+    demand_intent: dict[str, Any],
+    field: str,
+    *legacy_keys: str,
+) -> list[str]:
+    """Read only soft v3 constraints for ranking, without reusing hard values as preferences."""
+    soft_values = v3_constraint_values(demand_intent, field, ("softPreferences",))
+    if soft_values is not None:
+        return normalized_values(soft_values)
+    if v3_constraint_values(demand_intent, field, ("hardFilters",)) is not None:
+        return []
+    return demand_values(demand_intent, field, *(legacy_keys or (field,)))
+
+
+def hard_constraint_values(demand_intent: dict[str, Any], field: str) -> list[str]:
+    return normalized_values(
+        v3_constraint_values(demand_intent, field, ("hardFilters",)) or []
+    )
 
 
 def demand_values(
@@ -207,6 +235,59 @@ def demand_budget_max(demand_intent: dict[str, Any]) -> float | None:
         numeric_values = [number for value in values if (number := as_number(value)) is not None]
         return min(numeric_values) if numeric_values else None
     return as_number(demand_intent.get("budgetMax") or demand_intent.get("budget_max"))
+
+
+def hard_budget_max(demand_intent: dict[str, Any]) -> float | None:
+    if normalize_text(demand_intent.get("version")) == "demand-intent-v3":
+        values = v3_constraint_values(demand_intent, "budgetMax", ("hardFilters",)) or []
+        numeric_values = [number for value in values if (number := as_number(value)) is not None]
+        return min(numeric_values) if numeric_values else None
+    return as_number(demand_intent.get("budgetMax") or demand_intent.get("budget_max"))
+
+
+def preference_budget_max(demand_intent: dict[str, Any]) -> float | None:
+    if normalize_text(demand_intent.get("version")) == "demand-intent-v3":
+        values = v3_constraint_values(demand_intent, "budgetMax", ("softPreferences",))
+        if values is not None:
+            numeric_values = [number for value in values if (number := as_number(value)) is not None]
+            return min(numeric_values) if numeric_values else None
+        if v3_constraint_values(demand_intent, "budgetMax", ("hardFilters",)) is not None:
+            return None
+    return as_number(demand_intent.get("budgetMax") or demand_intent.get("budget_max"))
+
+
+def candidate_fails_hard_constraints(
+    candidate: dict[str, Any],
+    demand_intent: dict[str, Any] | None,
+) -> bool:
+    """Apply only candidate-verifiable HARD conditions; Java remains authoritative for other facts."""
+    if not isinstance(demand_intent, dict):
+        return False
+
+    budget_max = hard_budget_max(demand_intent)
+    candidate_price = as_number(candidate.get("sale_price"))
+    if budget_max is not None and (candidate_price is None or candidate_price > budget_max):
+        return True
+
+    scalar_fields = {
+        "category": normalize_text(candidate.get("category") or candidate.get("category_name")),
+        "fitPreferences": normalize_text(candidate.get("fit_type")),
+    }
+    for field, candidate_value in scalar_fields.items():
+        requested = hard_constraint_values(demand_intent, field)
+        if requested and candidate_value not in requested:
+            return True
+
+    collection_fields = {
+        "season": normalized_values(candidate.get("season")) + normalized_values(candidate.get("seasons")),
+        "style": normalized_values(candidate.get("style_tags")) + candidate_tag_values(candidate, "attribute_tags"),
+        "attributes": candidate_tag_values(candidate, "attribute_tags"),
+    }
+    for field, candidate_values in collection_fields.items():
+        requested = hard_constraint_values(demand_intent, field)
+        if requested and not set(requested) & set(candidate_values):
+            return True
+    return False
 
 
 def candidate_tag_values(candidate: dict[str, Any], key: str) -> list[str]:
@@ -365,11 +446,11 @@ def preferences_from_demand_intent(demand_intent: dict[str, Any] | None) -> dict
     if not isinstance(demand_intent, dict):
         return preferences
 
-    append_unique(preferences["scene"], demand_values(demand_intent, "scene"))
-    append_unique(preferences["style_tags"], demand_values(demand_intent, "style"))
-    append_unique(preferences["season"], demand_values(demand_intent, "season"))
+    append_unique(preferences["scene"], preference_values(demand_intent, "scene"))
+    append_unique(preferences["style_tags"], preference_values(demand_intent, "style"))
+    append_unique(preferences["season"], preference_values(demand_intent, "season"))
 
-    attributes = set(demand_values(demand_intent, "attributes"))
+    attributes = set(preference_values(demand_intent, "attributes"))
     if {"保暖", "厚款"} & attributes:
         append_unique(preferences["style_tags"], ["warm"])
         append_unique(preferences["season"], ["winter"])
@@ -380,7 +461,7 @@ def preferences_from_demand_intent(demand_intent: dict[str, Any] | None) -> dict
     if "显高" in attributes:
         append_unique(preferences["visual_goals"], ["taller"])
 
-    budget_max = demand_budget_max(demand_intent)
+    budget_max = preference_budget_max(demand_intent)
     if budget_max is not None:
         preferences["budget_max"] = int(budget_max)
 
@@ -567,6 +648,7 @@ def score_candidate(
     alternative_size: str | None,
     user_context: dict[str, Any],
     preferences: dict[str, Any],
+    enforce_preference_limits: bool = True,
 ) -> tuple[float, list[str]]:
     score = 0.0
     score_parts = []
@@ -590,7 +672,12 @@ def score_candidate(
 
     sale_price = as_number(candidate.get("sale_price"))
     budget_max = resolve_budget_max(user_context, preferences)
-    if sale_price is not None and budget_max is not None and sale_price > budget_max:
+    if (
+        enforce_preference_limits
+        and sale_price is not None
+        and budget_max is not None
+        and sale_price > budget_max
+    ):
         return -1.0, []
 
     if sale_price is not None and budget_max is not None and sale_price <= budget_max:
@@ -616,7 +703,7 @@ def score_candidate(
     if is_winter_warm_query(preferences):
         winter_match = candidate_has_winter_season(candidate)
         warm_match = candidate_has_warm_signal(candidate)
-        if not winter_match and not warm_match:
+        if enforce_preference_limits and not winter_match and not warm_match:
             return -1.0, []
         if winter_match:
             score += 0.3
@@ -694,6 +781,7 @@ def build_product_rerank_result(
             "semantic_preferences": preferences,
             "candidate_scores": [],
             "recommendation_source": "java_candidates_empty",
+            "rejected_reasons": {},
         }
 
     intent = (intent_result or {}).get("intent")
@@ -703,6 +791,7 @@ def build_product_rerank_result(
             "semantic_preferences": preferences,
             "candidate_scores": [],
             "recommendation_source": "not_recommendable_intent",
+            "rejected_reasons": {},
         }
 
     user_context = user_context or {}
@@ -711,6 +800,7 @@ def build_product_rerank_result(
     alternative_size = get_alternative_size(tool_results)
     query_terms = collect_query_terms(user_query, user_context, preferences)
     rag_explanation_parts = extract_rag_explanation_parts(tool_results)
+    enforce_preference_limits = normalize_text((demand_intent or {}).get("version")) != "demand-intent-v3"
 
     scored_candidates = []
     candidate_scores = []
@@ -722,21 +812,38 @@ def build_product_rerank_result(
         if sku_id is None or spu_id is None or sku_id in seen_skus:
             continue
 
-        score, score_parts = score_candidate(
-            candidate,
-            query_terms,
-            recommended_size,
-            alternative_size,
-            user_context,
-            preferences,
-        )
         matched_dimensions = build_matched_dimensions(
             candidate,
             demand_intent,
             user_query,
             preferences,
         )
-        selected = score >= 0 and bool(matched_dimensions)
+        if candidate_fails_hard_constraints(candidate, demand_intent):
+            score, score_parts = -1.0, []
+            rejection_reason = REJECTION_HARD_FILTER
+        else:
+            score, score_parts = score_candidate(
+                candidate,
+                query_terms,
+                recommended_size,
+                alternative_size,
+                user_context,
+                preferences,
+                enforce_preference_limits=enforce_preference_limits,
+            )
+            if score < 0 and not candidate_matches_size(
+                candidate,
+                recommended_size,
+                alternative_size,
+            ):
+                rejection_reason = REJECTION_SIZE
+            elif score < 0:
+                rejection_reason = REJECTION_LOW_STYLE
+            elif not matched_dimensions:
+                rejection_reason = REJECTION_MISSING_EVIDENCE
+            else:
+                rejection_reason = None
+        selected = rejection_reason is None
 
         candidate_scores.append(
             {
@@ -746,6 +853,7 @@ def build_product_rerank_result(
                 "selected": selected,
                 "score_parts": score_parts,
                 "matched_dimensions": matched_dimensions,
+                "rejection_reason": rejection_reason,
             }
         )
 
@@ -777,10 +885,19 @@ def build_product_rerank_result(
     selected_ref_keys = {(ref["spu_id"], ref["sku_id"]) for ref in refs}
     for candidate_score in candidate_scores:
         candidate_score["selected"] = (candidate_score["spu_id"], candidate_score["sku_id"]) in selected_ref_keys
+        if not candidate_score["selected"] and candidate_score["rejection_reason"] is None:
+            candidate_score["rejection_reason"] = REJECTION_LOW_STYLE
+
+    rejected_reasons = {}
+    for candidate_score in candidate_scores:
+        reason = candidate_score["rejection_reason"]
+        if reason:
+            rejected_reasons[reason] = rejected_reasons.get(reason, 0) + 1
 
     return {
         "product_refs": refs,
         "semantic_preferences": preferences,
         "candidate_scores": candidate_scores,
         "recommendation_source": "java_candidates_with_ai_rerank",
+        "rejected_reasons": rejected_reasons,
     }

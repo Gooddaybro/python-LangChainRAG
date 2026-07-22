@@ -274,14 +274,117 @@ class RecommendationServiceTests(unittest.TestCase):
         )
 
         self.assertEqual([ref["spu_id"] for ref in result["product_refs"]], [1001])
-        self.assertEqual(result["semantic_preferences"]["budget_max"], 500)
-        self.assertIn("summer", result["semantic_preferences"]["season"])
+        self.assertIsNone(result["semantic_preferences"]["budget_max"])
+        self.assertEqual(result["semantic_preferences"]["season"], [])
         self.assertIn("casual", result["semantic_preferences"]["style_tags"])
         evidence = result["product_refs"][0]["matched_dimensions"]
         self.assertEqual(
             {item["dimension"] for item in evidence},
             {"category", "season", "style", "budgetMax"},
         )
+
+    def test_soft_budget_and_season_never_hard_reject_a_candidate(self):
+        demand_intent = {
+            "version": "demand-intent-v3",
+            "requestType": "OUTFIT_ADVICE",
+            "requestedCapabilities": ["PRODUCT_SELECTION"],
+            "hardFilters": [
+                self.v3_constraint("category", "EQUALS", ["外套"], "HARD"),
+            ],
+            "softPreferences": [
+                self.v3_constraint("budgetMax", "CONTAINS", ["100"], "SOFT", weight=0.7),
+                self.v3_constraint("season", "CONTAINS", ["WINTER"], "SOFT", weight=0.6),
+            ],
+        }
+
+        result = build_product_rerank_result(
+            [
+                {
+                    "spu_id": 1001,
+                    "sku_id": 2001,
+                    "name": "夏季通勤外套",
+                    "category": "外套",
+                    "season": ["summer"],
+                    "stock_status": "in_stock",
+                    "sale_price": 299,
+                }
+            ],
+            {"intent": "recommendation"},
+            "帮我看看",
+            {},
+            {},
+            demand_intent=demand_intent,
+        )
+
+        self.assertEqual([ref["spu_id"] for ref in result["product_refs"]], [1001])
+        self.assertEqual(result["semantic_preferences"]["budget_max"], 100)
+        self.assertIn("winter", result["semantic_preferences"]["season"])
+        self.assertEqual(result["rejected_reasons"], {})
+
+    def test_rerank_result_counts_stable_java_rejection_reasons(self):
+        hard_category = {
+            "version": "demand-intent-v3",
+            "hardFilters": [self.v3_constraint("category", "EQUALS", ["外套"], "HARD")],
+            "softPreferences": [],
+        }
+        mismatch = build_product_rerank_result(
+            [{"spu_id": 1001, "sku_id": 2001, "name": "T恤", "category": "T恤"}],
+            {"intent": "recommendation"},
+            "帮我看看",
+            {},
+            {},
+            demand_intent=hard_category,
+        )
+        size_and_evidence = build_product_rerank_result(
+            [
+                {"spu_id": 1002, "sku_id": 2002, "name": "M 码外套", "size": "M"},
+                {"spu_id": 1003, "sku_id": 2003, "name": "L 码外套", "size": "L"},
+            ],
+            {"intent": "recommendation"},
+            "帮我看看",
+            {},
+            {"size_tool": {"recommended_size": "L"}},
+            demand_intent={"version": "demand-intent-v3", "hardFilters": [], "softPreferences": []},
+        )
+        limited = build_product_rerank_result(
+            [
+                {"spu_id": 1004, "sku_id": 2004, "name": "外套 A", "category": "外套"},
+                {"spu_id": 1005, "sku_id": 2005, "name": "外套 B", "category": "外套"},
+            ],
+            {"intent": "recommendation"},
+            "外套",
+            {},
+            {},
+            limit=1,
+            demand_intent=hard_category,
+        )
+
+        self.assertEqual(mismatch["rejected_reasons"], {"HARD_FILTER_MISMATCH": 1})
+        self.assertEqual(
+            size_and_evidence["rejected_reasons"],
+            {"SIZE_MISMATCH": 1, "MISSING_REQUIRED_EVIDENCE": 1},
+        )
+        self.assertEqual(limited["rejected_reasons"], {"LOW_STYLE_SCORE": 1})
+
+    def test_matched_size_does_not_mislabel_another_rejection_as_size_mismatch(self):
+        result = build_product_rerank_result(
+            [
+                {
+                    "spu_id": 1001,
+                    "sku_id": 2001,
+                    "name": "M 码外套",
+                    "category": "外套",
+                    "size": "M",
+                    "sale_price": 300,
+                }
+            ],
+            {"intent": "recommendation"},
+            "推荐外套",
+            {"budget_max": 100},
+            {"size_tool": {"recommended_size": "M"}},
+        )
+
+        self.assertEqual(result["rejected_reasons"], {"LOW_STYLE_SCORE": 1})
 
     @staticmethod
     def v3_constraint(field, operator, values, strength, weight=None):

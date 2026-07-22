@@ -142,7 +142,7 @@ class IntentConstraint(BaseModel):
     origin: Literal["USER_EXPLICIT", "PROFILE", "SYSTEM_DERIVED", "LEGACY_UNPROVENANCED"]
     originTurnId: str | None = None
     derivedFromConstraintId: str | None = None
-    scope: str | None = None
+    scope: Literal["ACTIVE_DEMAND"] | None = None
     weight: float | None = None
 
     @model_validator(mode="after")
@@ -167,11 +167,11 @@ class DemandIntent(BaseModel):
     version: str = Field(default="demand-intent-v3", description="Java 侧需求解析契约版本。")
     requestType: str | None = Field(default=None, description="Java 维护的规范主任务。")
     requestedCapabilities: list[str] = Field(default_factory=list, description="同一回答需要执行的附加能力。")
-    hardFilters: list[IntentConstraint] = Field(
+    hardFilters: list[IntentConstraint | str] = Field(
         default_factory=list,
         description="Java 已经用于候选池过滤的硬约束。",
     )
-    softPreferences: list[IntentConstraint] = Field(
+    softPreferences: list[IntentConstraint | str] = Field(
         default_factory=list,
         description="Python 可用于排序解释的软偏好。",
     )
@@ -179,9 +179,22 @@ class DemandIntent(BaseModel):
 
     @model_validator(mode="after")
     def validate_constraint_partitions(self):
-        if any(constraint.strength != "HARD" for constraint in self.hardFilters):
+        if self.version == "demand-intent-v3" and any(
+            isinstance(constraint, str)
+            for constraint in self.hardFilters + self.softPreferences
+        ):
+            raise ValueError("demand-intent-v3 requires structured constraints")
+        if any(
+            constraint.strength != "HARD"
+            for constraint in self.hardFilters
+            if isinstance(constraint, IntentConstraint)
+        ):
             raise ValueError("hardFilters contains a constraint with the wrong strength")
-        if any(constraint.strength != "SOFT" for constraint in self.softPreferences):
+        if any(
+            constraint.strength != "SOFT"
+            for constraint in self.softPreferences
+            if isinstance(constraint, IntentConstraint)
+        ):
             raise ValueError("softPreferences contains a constraint with the wrong strength")
         return self
 

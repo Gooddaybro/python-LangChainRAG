@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from clothing_assistant import config_data
 from clothing_assistant.api.app import app
 from clothing_assistant.api.schemas import PythonChatRequest
+from clothing_assistant.application.answer_service import build_agent_response
 
 
 class ApiTests(unittest.TestCase):
@@ -663,6 +664,36 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(called_kwargs["demand_intent"]["hardFilters"][0]["values"], ["半裙"])
         self.assertEqual(called_kwargs["demand_intent"]["subjectMeasurements"]["heightCm"], 168)
 
+    def test_chat_accepts_legacy_string_constraint_lists(self):
+        fake_result = {
+            "answer": "fake answer",
+            "debug": {"intent_result": {"intent": "recommendation"}},
+        }
+        with (
+            patch("clothing_assistant.api.app.is_internal_auth_required", return_value=False),
+            patch("clothing_assistant.api.app.run_langgraph_agent", return_value=fake_result) as mock_run,
+        ):
+            response = self.client.post(
+                "/chat",
+                json={
+                    "request_id": "req-api-legacy-intent",
+                    "session_id": "session-api-legacy-intent",
+                    "query": "推荐外套",
+                    "demand_intent": {
+                        "version": "demand-intent-v2",
+                        "hardFilters": ["category"],
+                        "softPreferences": ["style"],
+                        "category": "外套",
+                        "style": ["casual"],
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        forwarded = mock_run.call_args.kwargs["demand_intent"]
+        self.assertEqual(forwarded["hardFilters"], ["category"])
+        self.assertEqual(forwarded["softPreferences"], ["style"])
+
     def test_chat_hides_debug_when_disabled(self):
         fake_result = {
             "answer": "fake answer",
@@ -786,6 +817,48 @@ class ApiTests(unittest.TestCase):
             response.json()["rejected_reasons"],
             {"OVER_BUDGET": 2, "OUT_OF_STOCK": 1},
         )
+
+    def test_chat_preserves_rejection_counts_from_production_agent_result(self):
+        agent_result = build_agent_response(
+            "暂无匹配商品。",
+            "推荐外套",
+            {"intent": "recommendation"},
+            [],
+            {"used_history": False, "ignored_history_reason": "not_needed"},
+            {},
+            "prompt",
+            candidates=[{"spu_id": 1001, "sku_id": 2001, "name": "T恤", "category": "T恤"}],
+            demand_intent={
+                "version": "demand-intent-v3",
+                "hardFilters": [
+                    {
+                        "id": "constraint-category",
+                        "field": "category",
+                        "operator": "EQUALS",
+                        "values": ["外套"],
+                        "strength": "HARD",
+                        "origin": "USER_EXPLICIT",
+                        "scope": "ACTIVE_DEMAND",
+                    }
+                ],
+                "softPreferences": [],
+            },
+        )
+        with (
+            patch("clothing_assistant.api.app.is_internal_auth_required", return_value=False),
+            patch("clothing_assistant.api.app.run_langgraph_agent", return_value=agent_result),
+        ):
+            response = self.client.post(
+                "/chat",
+                json={
+                    "request_id": "req-api-production-rejections",
+                    "session_id": "session-api-production-rejections",
+                    "query": "推荐外套",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["rejected_reasons"], {"HARD_FILTER_MISMATCH": 1})
 
     def test_chat_missing_info_adds_follow_up_action(self):
         fake_result = {

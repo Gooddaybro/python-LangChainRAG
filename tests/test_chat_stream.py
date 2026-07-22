@@ -22,6 +22,7 @@ from clothing_assistant.api.streaming import (
     format_sse_event,
     iter_answer_chunks,
 )
+from clothing_assistant.application.answer_service import build_agent_response
 from clothing_assistant.agent.nodes import find_forbidden_rag_fact
 
 
@@ -130,6 +131,37 @@ class ChatStreamHelperTests(unittest.TestCase):
         self.assertEqual(payload["product_refs"], product_refs)
         self.assertEqual(payload["rejected_reasons"], {"OVER_BUDGET": 2})
         self.assertNotIn("debug", payload)
+
+    def test_done_payload_preserves_production_agent_rejection_counts(self):
+        agent_result = build_agent_response(
+            "暂无匹配商品。",
+            "推荐外套",
+            {"intent": "recommendation"},
+            [],
+            {"used_history": False, "ignored_history_reason": "not_needed"},
+            {},
+            "prompt",
+            candidates=[{"spu_id": 1001, "sku_id": 2001, "name": "T恤", "category": "T恤"}],
+            demand_intent={
+                "version": "demand-intent-v3",
+                "hardFilters": [
+                    {
+                        "id": "constraint-category",
+                        "field": "category",
+                        "operator": "EQUALS",
+                        "values": ["外套"],
+                        "strength": "HARD",
+                        "origin": "USER_EXPLICIT",
+                        "scope": "ACTIVE_DEMAND",
+                    }
+                ],
+                "softPreferences": [],
+            },
+        )
+
+        payload = build_stream_done_payload(agent_result, "req-production-rejections")
+
+        self.assertEqual(payload["rejected_reasons"], {"HARD_FILTER_MISMATCH": 1})
 
 
 def parse_sse_events(body: str) -> list[tuple[str, dict]]:

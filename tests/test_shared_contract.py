@@ -138,11 +138,30 @@ class SharedContractTests(unittest.TestCase):
             {"operator": "BETWEEN"},
             {"strength": "MEDIUM"},
             {"origin": "LLM_GUESS"},
+            {"scope": "CURRENT_SESSION"},
         )
 
         for overrides in invalid_overrides:
             with self.subTest(overrides=overrides), self.assertRaises(ValidationError):
                 IntentConstraint.model_validate(self.valid_constraint(**overrides))
+
+        self.assertIsNone(IntentConstraint.model_validate(self.valid_constraint(scope=None)).scope)
+
+    def test_legacy_demand_intent_accepts_string_constraint_lists(self):
+        demand = DemandIntent.model_validate(
+            {
+                "version": "demand-intent-v2",
+                "hardFilters": ["targetGender", "category"],
+                "softPreferences": ["style"],
+                "category": "外套",
+                "style": ["casual"],
+            }
+        )
+
+        serialized = demand.model_dump(exclude_unset=True)
+
+        self.assertEqual(serialized["hardFilters"], ["targetGender", "category"])
+        self.assertEqual(serialized["softPreferences"], ["style"])
 
     def test_intent_constraint_enforces_weight_and_derived_parent_invariants(self):
         invalid_overrides = (

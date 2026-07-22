@@ -355,10 +355,12 @@ def build_agent_response(
         demand_intent=demand_intent,
     )
     product_refs = rerank_result["product_refs"]
+    rejected_reasons = rerank_result["rejected_reasons"]
 
     return {
         "answer": answer,
         "product_refs": product_refs,
+        "rejected_reasons": rejected_reasons,
         "debug": {
             "user_query": user_query,
             "request_id": request_id,
@@ -370,6 +372,7 @@ def build_agent_response(
             "demand_intent": demand_intent or {},
             "product_refs": product_refs,
             "selected_product_refs": product_refs,
+            "rejected_reasons": rejected_reasons,
             "semantic_preferences": rerank_result["semantic_preferences"],
             "candidate_scores": rerank_result["candidate_scores"],
             "recommendation_source": rerank_result["recommendation_source"],

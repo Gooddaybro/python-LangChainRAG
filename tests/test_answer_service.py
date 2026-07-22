@@ -1,6 +1,6 @@
 import unittest
 
-from clothing_assistant.application.answer_service import build_outfit_advice_draft
+from clothing_assistant.application.answer_service import build_agent_response, build_outfit_advice_draft
 
 
 def outfit_state(candidates):
@@ -34,6 +34,39 @@ def outfit_state(candidates):
 
 
 class OutfitAnswerServiceTests(unittest.TestCase):
+    def test_agent_response_lifts_production_rejection_counts_to_top_level(self):
+        response = build_agent_response(
+            "暂无匹配商品。",
+            "推荐外套",
+            {"intent": "recommendation"},
+            [],
+            {"used_history": False, "ignored_history_reason": "not_needed"},
+            {},
+            "prompt",
+            candidates=[{"spu_id": 1001, "sku_id": 2001, "name": "T恤", "category": "T恤"}],
+            demand_intent={
+                "version": "demand-intent-v3",
+                "hardFilters": [
+                    {
+                        "id": "constraint-category",
+                        "field": "category",
+                        "operator": "EQUALS",
+                        "values": ["外套"],
+                        "strength": "HARD",
+                        "origin": "USER_EXPLICIT",
+                        "originTurnId": "turn-1",
+                        "derivedFromConstraintId": None,
+                        "scope": "ACTIVE_DEMAND",
+                        "weight": None,
+                    }
+                ],
+                "softPreferences": [],
+            },
+        )
+
+        self.assertEqual(response["rejected_reasons"], {"HARD_FILTER_MISMATCH": 1})
+        self.assertEqual(response["debug"]["rejected_reasons"], response["rejected_reasons"])
+
     def test_outfit_answer_uses_fixed_layers_and_only_real_matched_products(self):
         answer = build_outfit_advice_draft(
             outfit_state(
