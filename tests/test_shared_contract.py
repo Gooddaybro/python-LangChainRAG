@@ -2,6 +2,8 @@ import json
 import unittest
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from clothing_assistant.api.schemas import (
     ChatHistoryItem,
     DemandIntent,
@@ -55,6 +57,12 @@ class SharedContractTests(unittest.TestCase):
         self.assert_model_fields_match_contract(MatchedDimension, "matched_dimension")
         self.assert_model_fields_match_contract(SuggestedAction, "suggested_action")
 
+    def test_java_consumed_response_fields_are_emitted_by_python(self):
+        java_consumed = set(self.contract["field_sets"]["java_consumed_chat_response"])
+        python_emitted = set(self.contract["field_sets"]["python_chat_response"])
+
+        self.assertLessEqual(java_consumed, python_emitted)
+
     def test_v3_demand_intent_parses_and_serializes_constraints(self):
         demand_intent = DemandIntent.model_validate(
             {
@@ -71,7 +79,7 @@ class SharedContractTests(unittest.TestCase):
                         "origin": "USER_EXPLICIT",
                         "originTurnId": "turn-7",
                         "derivedFromConstraintId": None,
-                        "scope": "CURRENT_SESSION",
+                        "scope": "ACTIVE_DEMAND",
                         "weight": None,
                     }
                 ],
@@ -85,7 +93,7 @@ class SharedContractTests(unittest.TestCase):
                         "origin": "USER_EXPLICIT",
                         "originTurnId": "turn-7",
                         "derivedFromConstraintId": None,
-                        "scope": "CURRENT_SESSION",
+                        "scope": "ACTIVE_DEMAND",
                         "weight": 0.8,
                     }
                 ],
@@ -95,7 +103,7 @@ class SharedContractTests(unittest.TestCase):
                     "originalText": "168cm 55kg",
                     "normalizedFrom": "METRIC",
                     "subject": "SELF",
-                    "scope": "CURRENT_SESSION",
+                    "scope": "ACTIVE_DEMAND",
                     "source": "USER_EXPLICIT",
                 },
             }
@@ -120,3 +128,56 @@ class SharedContractTests(unittest.TestCase):
         )
 
         self.assertEqual(product_ref.model_dump()["outfit_role"], "OUTER")
+
+    def test_intent_constraint_rejects_blank_core_values_and_unknown_enums(self):
+        invalid_overrides = (
+            {"id": " "},
+            {"field": "\t"},
+            {"values": []},
+            {"values": ["SUMMER", " "]},
+            {"operator": "BETWEEN"},
+            {"strength": "MEDIUM"},
+            {"origin": "LLM_GUESS"},
+        )
+
+        for overrides in invalid_overrides:
+            with self.subTest(overrides=overrides), self.assertRaises(ValidationError):
+                IntentConstraint.model_validate(self.valid_constraint(**overrides))
+
+    def test_intent_constraint_enforces_weight_and_derived_parent_invariants(self):
+        invalid_overrides = (
+            {"strength": "HARD", "weight": 0.5},
+            {"origin": "SYSTEM_DERIVED", "derivedFromConstraintId": None},
+            {"origin": "SYSTEM_DERIVED", "derivedFromConstraintId": " "},
+            {"origin": "USER_EXPLICIT", "derivedFromConstraintId": "parent-1"},
+        )
+
+        for overrides in invalid_overrides:
+            with self.subTest(overrides=overrides), self.assertRaises(ValidationError):
+                IntentConstraint.model_validate(self.valid_constraint(**overrides))
+
+    def test_demand_intent_rejects_constraints_in_the_wrong_partition(self):
+        hard = self.valid_constraint(strength="HARD", weight=None)
+        soft = self.valid_constraint(strength="SOFT", weight=0.8)
+
+        with self.assertRaises(ValidationError):
+            DemandIntent.model_validate({"hardFilters": [soft]})
+        with self.assertRaises(ValidationError):
+            DemandIntent.model_validate({"softPreferences": [hard]})
+
+    @staticmethod
+    def valid_constraint(**overrides):
+        payload = {
+            "id": "constraint-1",
+            "field": "season",
+            "operator": "EQUALS",
+            "values": ["SUMMER"],
+            "strength": "SOFT",
+            "origin": "USER_EXPLICIT",
+            "originTurnId": "turn-1",
+            "derivedFromConstraintId": None,
+            "scope": "ACTIVE_DEMAND",
+            "weight": None,
+        }
+        payload.update(overrides)
+        return payload

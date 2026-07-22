@@ -162,6 +162,53 @@ def normalized_values(value: Any) -> list[str]:
     return [normalized for item in iterable_candidate_values(value) if (normalized := normalize_text(item))]
 
 
+def v3_constraint_values(demand_intent: dict[str, Any], field: str) -> list[Any] | None:
+    """Return authoritative v3 values for one field, or None when no constraint declares it."""
+    if normalize_text(demand_intent.get("version")) != "demand-intent-v3":
+        return None
+
+    values = []
+    found = False
+    for collection in ("hardFilters", "softPreferences"):
+        for constraint in demand_intent.get(collection) or []:
+            if not isinstance(constraint, dict) or constraint.get("field") != field:
+                continue
+            found = True
+            values.extend(iterable_candidate_values(constraint.get("values")))
+    return values if found else None
+
+
+def demand_values(
+    demand_intent: dict[str, Any],
+    field: str,
+    *legacy_keys: str,
+) -> list[str]:
+    """Read v3 constraints first, falling back to legacy scalar extras only when absent."""
+    constraint_values = v3_constraint_values(demand_intent, field)
+    if constraint_values is not None:
+        raw_values = constraint_values
+    else:
+        raw_values = []
+        for key in legacy_keys or (field,):
+            value = demand_intent.get(key)
+            if value is not None:
+                raw_values.extend(iterable_candidate_values(value))
+
+    result = []
+    for value in normalized_values(raw_values):
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def demand_budget_max(demand_intent: dict[str, Any]) -> float | None:
+    values = v3_constraint_values(demand_intent, "budgetMax")
+    if values is not None:
+        numeric_values = [number for value in values if (number := as_number(value)) is not None]
+        return min(numeric_values) if numeric_values else None
+    return as_number(demand_intent.get("budgetMax") or demand_intent.get("budget_max"))
+
+
 def candidate_tag_values(candidate: dict[str, Any], key: str) -> list[str]:
     """Return Java-verifiable tag values, stripping an optional `name:` prefix."""
     values = []
@@ -171,13 +218,6 @@ def candidate_tag_values(candidate: dict[str, Any], key: str) -> list[str]:
             continue
         values.append(value.split(":", 1)[1].strip() if ":" in value else value)
     return values
-
-
-def demand_list(demand_intent: dict[str, Any], camel_key: str, snake_key: str | None = None) -> list[str]:
-    value = demand_intent.get(camel_key)
-    if value is None and snake_key:
-        value = demand_intent.get(snake_key)
-    return normalized_values(value)
 
 
 def append_match(
@@ -257,30 +297,31 @@ def build_matched_dimensions(
     )
     matches: list[dict[str, str]] = []
 
-    requested_category = normalize_text(demand.get("category"))
+    requested_categories = demand_values(demand, "category")
     candidate_category = normalize_text(candidate.get("category") or candidate.get("category_name"))
-    if requested_category and requested_category == candidate_category:
-        append_match(matches, "category", requested_category, candidate_category, "PRODUCT_CATEGORY")
+    if candidate_category in requested_categories:
+        append_match(matches, "category", candidate_category, candidate_category, "PRODUCT_CATEGORY")
 
-    requested_season = normalize_text(demand.get("season"))
+    requested_seasons = demand_values(demand, "season")
     candidate_seasons = normalized_values(candidate.get("season")) + normalized_values(candidate.get("seasons"))
-    if requested_season and requested_season in candidate_seasons:
-        append_match(matches, "season", requested_season, requested_season, "PRODUCT_SEASON")
+    for requested_season in requested_seasons:
+        if requested_season in candidate_seasons:
+            append_match(matches, "season", requested_season, requested_season, "PRODUCT_SEASON")
 
     candidate_styles = normalized_values(candidate.get("style_tags")) + candidate_tag_values(
         candidate, "attribute_tags"
     )
-    for requested_style in demand_list(demand, "style"):
+    for requested_style in demand_values(demand, "style"):
         if requested_style in candidate_styles:
             append_match(matches, "style", requested_style, requested_style, "PRODUCT_STYLE_TAG")
 
     candidate_fit = normalize_text(candidate.get("fit_type"))
-    for requested_fit in demand_list(demand, "fitPreferences", "fit_preferences"):
+    for requested_fit in demand_values(demand, "fitPreferences", "fitPreferences", "fit_preferences"):
         if requested_fit == candidate_fit:
             append_match(matches, "fitPreferences", requested_fit, candidate_fit, "PRODUCT_FIT")
 
     candidate_attributes = candidate_tag_values(candidate, "attribute_tags")
-    for requested_attribute in demand_list(demand, "attributes"):
+    for requested_attribute in demand_values(demand, "attributes"):
         if requested_attribute in candidate_attributes:
             append_match(
                 matches,
@@ -290,7 +331,7 @@ def build_matched_dimensions(
                 "PRODUCT_ATTRIBUTE",
             )
 
-    requested_budget = as_number(demand.get("budgetMax") or demand.get("budget_max"))
+    requested_budget = demand_budget_max(demand)
     candidate_price = as_number(candidate.get("sale_price"))
     if requested_budget is not None and candidate_price is not None and candidate_price <= requested_budget:
         append_match(
@@ -324,11 +365,11 @@ def preferences_from_demand_intent(demand_intent: dict[str, Any] | None) -> dict
     if not isinstance(demand_intent, dict):
         return preferences
 
-    append_unique(preferences["scene"], demand_intent.get("scene") or [])
-    append_unique(preferences["style_tags"], demand_intent.get("style") or [])
-    append_unique(preferences["season"], iterable_candidate_values(demand_intent.get("season")))
+    append_unique(preferences["scene"], demand_values(demand_intent, "scene"))
+    append_unique(preferences["style_tags"], demand_values(demand_intent, "style"))
+    append_unique(preferences["season"], demand_values(demand_intent, "season"))
 
-    attributes = {normalize_text(value) for value in demand_intent.get("attributes") or []}
+    attributes = set(demand_values(demand_intent, "attributes"))
     if {"保暖", "厚款"} & attributes:
         append_unique(preferences["style_tags"], ["warm"])
         append_unique(preferences["season"], ["winter"])
@@ -339,7 +380,7 @@ def preferences_from_demand_intent(demand_intent: dict[str, Any] | None) -> dict
     if "显高" in attributes:
         append_unique(preferences["visual_goals"], ["taller"])
 
-    budget_max = as_number(demand_intent.get("budgetMax") or demand_intent.get("budget_max"))
+    budget_max = demand_budget_max(demand_intent)
     if budget_max is not None:
         preferences["budget_max"] = int(budget_max)
 

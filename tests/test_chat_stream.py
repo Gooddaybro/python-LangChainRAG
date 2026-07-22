@@ -103,6 +103,7 @@ class ChatStreamHelperTests(unittest.TestCase):
                 "answer": "我建议您穿 L 码。",
                 "intent": "size_recommendation",
                 "product_refs": [],
+                "rejected_reasons": {},
             },
         )
 
@@ -118,6 +119,7 @@ class ChatStreamHelperTests(unittest.TestCase):
         agent_result = {
             "answer": "推荐这件外套。",
             "product_refs": product_refs,
+            "rejected_reasons": {"OVER_BUDGET": 2},
             "debug": {
                 "intent_result": {"intent": "recommendation"},
             },
@@ -126,6 +128,7 @@ class ChatStreamHelperTests(unittest.TestCase):
         payload = build_stream_done_payload(agent_result, request_id="req-stream-product-refs")
 
         self.assertEqual(payload["product_refs"], product_refs)
+        self.assertEqual(payload["rejected_reasons"], {"OVER_BUDGET": 2})
         self.assertNotIn("debug", payload)
 
 
@@ -389,6 +392,7 @@ class ChatStreamEndpointTests(unittest.TestCase):
                     "answer": "我建议您穿 L 码。",
                     "intent": "size_recommendation",
                     "product_refs": [],
+                    "rejected_reasons": {},
                 },
             ),
         )

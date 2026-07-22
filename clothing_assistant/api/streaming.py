@@ -78,6 +78,7 @@ def build_stream_done_payload(agent_result: dict[str, Any], request_id: str) -> 
         "answer": agent_result.get("answer", ""),
         "intent": get_agent_intent(agent_result),
         "product_refs": agent_result.get("product_refs", []),
+        "rejected_reasons": agent_result.get("rejected_reasons", {}),
     }
 
 

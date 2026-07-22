@@ -128,6 +128,22 @@ class RecommendationServiceTests(unittest.TestCase):
             ["OUTFIT_PLAN", "PRODUCT_SELECTION"],
         )
 
+    def test_router_uses_v3_java_main_task_as_authority(self):
+        result = intent_router(
+            "你好",
+            {
+                "version": "demand-intent-v3",
+                "requestType": "OUTFIT_ADVICE",
+                "requestedCapabilities": ["OUTFIT_PLAN", "PRODUCT_SELECTION"],
+                "hardFilters": [],
+                "softPreferences": [],
+            },
+        )
+
+        self.assertEqual(result["intent"], "recommendation")
+        self.assertEqual(result["request_type"], "OUTFIT_ADVICE")
+        self.assertEqual(result["requested_capabilities"], ["OUTFIT_PLAN", "PRODUCT_SELECTION"])
+
     def test_router_keeps_v1_product_recommendation_compatibility(self):
         result = intent_router(
             "男性，想买夏季 T 恤",
@@ -210,6 +226,77 @@ class RecommendationServiceTests(unittest.TestCase):
                 ("fitPreferences", "PRODUCT_FIT"),
             },
         )
+
+    def test_v3_constraints_drive_filtering_ranking_and_match_evidence(self):
+        candidates = [
+            {
+                "spu_id": 1001,
+                "sku_id": 2001,
+                "name": "夏季休闲通勤外套",
+                "category": "外套",
+                "season": ["summer"],
+                "style_tags": ["casual"],
+                "stock_status": "in_stock",
+                "sale_price": 299,
+            },
+            {
+                "spu_id": 1002,
+                "sku_id": 2002,
+                "name": "高价夏季休闲外套",
+                "category": "外套",
+                "season": ["summer"],
+                "style_tags": ["casual"],
+                "stock_status": "in_stock",
+                "sale_price": 899,
+            },
+        ]
+        demand_intent = {
+            "version": "demand-intent-v3",
+            "requestType": "OUTFIT_ADVICE",
+            "requestedCapabilities": ["PRODUCT_SELECTION"],
+            "hardFilters": [
+                self.v3_constraint("category", "EQUALS", ["外套"], "HARD"),
+                self.v3_constraint("season", "EQUALS", ["SUMMER"], "HARD"),
+                self.v3_constraint("budgetMax", "MAX", ["500"], "HARD"),
+            ],
+            "softPreferences": [
+                self.v3_constraint("style", "CONTAINS", ["CASUAL"], "SOFT", weight=0.8),
+            ],
+        }
+
+        result = build_product_rerank_result(
+            candidates,
+            {"intent": "recommendation", "request_type": "OUTFIT_ADVICE"},
+            "帮我看看",
+            {},
+            {},
+            demand_intent=demand_intent,
+        )
+
+        self.assertEqual([ref["spu_id"] for ref in result["product_refs"]], [1001])
+        self.assertEqual(result["semantic_preferences"]["budget_max"], 500)
+        self.assertIn("summer", result["semantic_preferences"]["season"])
+        self.assertIn("casual", result["semantic_preferences"]["style_tags"])
+        evidence = result["product_refs"][0]["matched_dimensions"]
+        self.assertEqual(
+            {item["dimension"] for item in evidence},
+            {"category", "season", "style", "budgetMax"},
+        )
+
+    @staticmethod
+    def v3_constraint(field, operator, values, strength, weight=None):
+        return {
+            "id": f"constraint-{field}",
+            "field": field,
+            "operator": operator,
+            "values": values,
+            "strength": strength,
+            "origin": "USER_EXPLICIT",
+            "originTurnId": "turn-7",
+            "derivedFromConstraintId": None,
+            "scope": "ACTIVE_DEMAND",
+            "weight": weight,
+        }
 
     def test_bare_height_weight_pair_is_normalized_for_size_tool(self):
         normalized = normalize_measurement_query("明天面试想要显瘦 177 130 该怎么选")

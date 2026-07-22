@@ -247,6 +247,7 @@ def build_contract_chat_response(agent_result, request_id, include_debug):
         answer=agent_result["answer"],
         intent=get_agent_intent(agent_result),
         product_refs=agent_result.get("product_refs", []),
+        rejected_reasons=agent_result.get("rejected_reasons", {}),
         suggested_actions=build_suggested_actions(agent_result),
         debug=agent_result.get("debug") if include_debug else None,
     )

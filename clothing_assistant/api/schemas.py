@@ -7,7 +7,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class DemandIntentParseHistoryItem(BaseModel):
@@ -136,14 +136,29 @@ class IntentConstraint(BaseModel):
 
     id: str
     field: str
-    operator: str
+    operator: Literal["EQUALS", "CONTAINS", "MAX"]
     values: list[str] = Field(default_factory=list)
-    strength: str
-    origin: str
+    strength: Literal["HARD", "SOFT"]
+    origin: Literal["USER_EXPLICIT", "PROFILE", "SYSTEM_DERIVED", "LEGACY_UNPROVENANCED"]
     originTurnId: str | None = None
     derivedFromConstraintId: str | None = None
     scope: str | None = None
     weight: float | None = None
+
+    @model_validator(mode="after")
+    def validate_java_invariants(self):
+        if not self.id.strip() or not self.field.strip() or not self.values:
+            raise ValueError("constraint id, field and values are required")
+        if any(not value.strip() for value in self.values):
+            raise ValueError("constraint values cannot contain blanks")
+        if self.strength == "HARD" and self.weight is not None:
+            raise ValueError("hard constraints cannot carry ranking weight")
+        if self.origin == "SYSTEM_DERIVED":
+            if self.derivedFromConstraintId is None or not self.derivedFromConstraintId.strip():
+                raise ValueError("derived constraints require a parent constraint id")
+        elif self.derivedFromConstraintId is not None:
+            raise ValueError("non-derived constraints cannot carry a parent constraint id")
+        return self
 
 
 class DemandIntent(BaseModel):
@@ -161,6 +176,14 @@ class DemandIntent(BaseModel):
         description="Python 可用于排序解释的软偏好。",
     )
     subjectMeasurements: SubjectMeasurements | None = Field(default=None, description="当前咨询对象的会话级测量值。")
+
+    @model_validator(mode="after")
+    def validate_constraint_partitions(self):
+        if any(constraint.strength != "HARD" for constraint in self.hardFilters):
+            raise ValueError("hardFilters contains a constraint with the wrong strength")
+        if any(constraint.strength != "SOFT" for constraint in self.softPreferences):
+            raise ValueError("softPreferences contains a constraint with the wrong strength")
+        return self
 
 
 class MatchedDimension(BaseModel):
@@ -227,6 +250,10 @@ class PythonChatResponse(BaseModel):
     answer: str = Field(..., description="对用户可见的助手回答。")
     intent: str = Field(..., description="Python 工作流检测到的用户意图。")
     product_refs: list[ProductRef] = Field(default_factory=list, description="Python 选择的商品引用列表。")
+    rejected_reasons: dict[str, int] = Field(
+        default_factory=dict,
+        description="Python 候选评估中按原因聚合的拒绝数量。",
+    )
     suggested_actions: list[SuggestedAction] = Field(default_factory=list, description="建议 Java/前端执行的动作列表。")
     debug: dict[str, Any] | None = Field(default=None, description="仅在请求要求时才包含的内部调试负载。")
 

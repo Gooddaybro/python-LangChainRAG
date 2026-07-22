@@ -545,6 +545,7 @@ class ApiTests(unittest.TestCase):
                 "answer": "fake answer",
                 "intent": "chat",
                 "product_refs": [],
+                "rejected_reasons": {},
                 "suggested_actions": [],
                 "debug": fake_result["debug"],
             },
@@ -623,7 +624,7 @@ class ApiTests(unittest.TestCase):
                     "origin": "USER_EXPLICIT",
                     "originTurnId": "turn-7",
                     "derivedFromConstraintId": None,
-                    "scope": "CURRENT_SESSION",
+                    "scope": "ACTIVE_DEMAND",
                     "weight": None,
                 }
             ],
@@ -634,7 +635,7 @@ class ApiTests(unittest.TestCase):
                 "originalText": "168cm 55kg",
                 "normalizedFrom": "METRIC",
                 "subject": "SELF",
-                "scope": "CURRENT_SESSION",
+                "scope": "ACTIVE_DEMAND",
                 "source": "USER_EXPLICIT",
             },
         }
@@ -690,6 +691,7 @@ class ApiTests(unittest.TestCase):
                 "answer": "fake answer",
                 "intent": "product_qa",
                 "product_refs": [],
+                "rejected_reasons": {},
                 "suggested_actions": [],
             },
         )
@@ -757,6 +759,7 @@ class ApiTests(unittest.TestCase):
         fake_result = {
             "answer": "推荐这件通勤外套。",
             "product_refs": product_refs,
+            "rejected_reasons": {"OVER_BUDGET": 2, "OUT_OF_STOCK": 1},
             "debug": {
                 "intent_result": {"intent": "recommendation"},
                 "stop_reason": "final_answer",
@@ -779,6 +782,10 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["product_refs"], product_refs)
+        self.assertEqual(
+            response.json()["rejected_reasons"],
+            {"OVER_BUDGET": 2, "OUT_OF_STOCK": 1},
+        )
 
     def test_chat_missing_info_adds_follow_up_action(self):
         fake_result = {

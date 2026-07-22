@@ -259,11 +259,12 @@ def normalize_capabilities(values):
     return result
 
 
-def route_java_v2_intent(demand_intent, need_history):
-    """Use the v2 Java main task as the only normative routing authority."""
+def route_java_intent(demand_intent, need_history):
+    """Use the current Java main task as the normative routing authority."""
     if not isinstance(demand_intent, dict):
         return None
-    if normalize_query(str(demand_intent.get("version") or "")) != "demand-intent-v2":
+    version = normalize_query(str(demand_intent.get("version") or ""))
+    if version not in {"demand-intent-v2", "demand-intent-v3"}:
         return None
 
     request_type = str(
@@ -282,7 +283,7 @@ def route_java_v2_intent(demand_intent, need_history):
         route[0],
         route[1],
         need_history,
-        "采用 Java demand-intent-v2 提供的规范主任务与附加能力。",
+        f"采用 Java {version} 提供的规范主任务与附加能力。",
         request_type,
         capabilities,
     )
@@ -302,7 +303,7 @@ def has_recommendation_demand(demand_intent):
     if not isinstance(demand_intent, dict):
         return False
 
-    return any(
+    if any(
         demand_intent.get(key)
         for key in (
             "targetGender",
@@ -314,6 +315,13 @@ def has_recommendation_demand(demand_intent):
             "style",
             "attributes",
         )
+    ):
+        return True
+
+    return any(
+        isinstance(constraint, dict) and bool(constraint.get("values"))
+        for collection in ("hardFilters", "softPreferences")
+        for constraint in demand_intent.get(collection) or []
     )
 
 
@@ -322,9 +330,9 @@ def intent_router(user_query, demand_intent=None):
     normalized_query = normalize_query(user_query)
     need_history = needs_history(user_query)
 
-    java_v2_result = route_java_v2_intent(demand_intent, need_history)
-    if java_v2_result is not None:
-        return java_v2_result
+    java_intent_result = route_java_intent(demand_intent, need_history)
+    if java_intent_result is not None:
+        return java_intent_result
 
     # 路由顺序本身就是业务规则：闲聊和政策先短路，尺码优先识别强信号。
     # Learning: 以后如果换成 LLM Router，这些顺序要转成 prompt 或结构化评测。
