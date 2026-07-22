@@ -321,6 +321,77 @@ class RecommendationServiceTests(unittest.TestCase):
         self.assertIn("winter", result["semantic_preferences"]["season"])
         self.assertEqual(result["rejected_reasons"], {})
 
+    def test_soft_budget_does_not_tighten_hard_budget_match_evidence(self):
+        demand_intent = {
+            "version": "demand-intent-v3",
+            "hardFilters": [
+                self.v3_constraint("budgetMax", "MAX", ["500"], "HARD"),
+            ],
+            "softPreferences": [
+                self.v3_constraint("budgetMax", "MAX", ["300"], "SOFT", weight=0.7),
+            ],
+        }
+
+        result = build_product_rerank_result(
+            [
+                {
+                    "spu_id": 1001,
+                    "sku_id": 2001,
+                    "name": "400 元外套",
+                    "sale_price": 400,
+                }
+            ],
+            {"intent": "recommendation"},
+            "帮我看看",
+            {},
+            {},
+            demand_intent=demand_intent,
+        )
+
+        self.assertEqual([ref["spu_id"] for ref in result["product_refs"]], [1001])
+        self.assertEqual(result["rejected_reasons"], {})
+        self.assertEqual(result["semantic_preferences"]["budget_max"], 300)
+        self.assertEqual(
+            result["product_refs"][0]["matched_dimensions"],
+            [
+                {
+                    "dimension": "budgetMax",
+                    "requested_value": "500",
+                    "candidate_value": "400",
+                    "evidence_source": "PRODUCT_PRICE",
+                }
+            ],
+        )
+
+    def test_soft_only_budget_can_supply_match_evidence(self):
+        demand_intent = {
+            "version": "demand-intent-v3",
+            "hardFilters": [],
+            "softPreferences": [
+                self.v3_constraint("budgetMax", "MAX", ["300"], "SOFT", weight=0.7),
+            ],
+        }
+
+        result = build_product_rerank_result(
+            [{"spu_id": 1001, "sku_id": 2001, "name": "250 元外套", "sale_price": 250}],
+            {"intent": "recommendation"},
+            "帮我看看",
+            {},
+            {},
+            demand_intent=demand_intent,
+        )
+
+        self.assertEqual([ref["spu_id"] for ref in result["product_refs"]], [1001])
+        self.assertEqual(
+            result["product_refs"][0]["matched_dimensions"][0],
+            {
+                "dimension": "budgetMax",
+                "requested_value": "300",
+                "candidate_value": "250",
+                "evidence_source": "PRODUCT_PRICE",
+            },
+        )
+
     def test_rerank_result_counts_stable_java_rejection_reasons(self):
         hard_category = {
             "version": "demand-intent-v3",

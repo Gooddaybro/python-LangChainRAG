@@ -230,7 +230,15 @@ def demand_values(
 
 
 def demand_budget_max(demand_intent: dict[str, Any]) -> float | None:
-    values = v3_constraint_values(demand_intent, "budgetMax")
+    if normalize_text(demand_intent.get("version")) == "demand-intent-v3":
+        hard_values = v3_constraint_values(demand_intent, "budgetMax", ("hardFilters",))
+        values = (
+            hard_values
+            if hard_values is not None
+            else v3_constraint_values(demand_intent, "budgetMax", ("softPreferences",))
+        )
+    else:
+        values = None
     if values is not None:
         numeric_values = [number for value in values if (number := as_number(value)) is not None]
         return min(numeric_values) if numeric_values else None
