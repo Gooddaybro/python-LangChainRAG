@@ -1,0 +1,11 @@
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+.git
+.idea
+.mypy_cache
+clothing_assistant/chat_history
+clothing_assistant/chroma_db
+clothing_assistant/knowledge_file_hashes.json
+
