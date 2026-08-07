@@ -138,6 +138,11 @@ class ProductRef(BaseModel):
     sku_id: int | str = Field(..., description="助手回复中所引用的 Java SKU ID。")
     reason: str = Field(..., description="对用户可见的该商品推荐理由。")
     rank_score: float | None = Field(default=None, description="来自 Python 工作流的可选排名得分。")
+    matched_dimensions: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="可选结构化匹配证据；Java 会在接受商品引用前重新校验。",
+    )
+    outfit_role: str | None = Field(default=None, description="可选穿搭角色；Java 会按商品分类重新校验。")
 
 
 class SuggestedAction(BaseModel):
