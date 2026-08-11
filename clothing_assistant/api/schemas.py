@@ -7,7 +7,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class DemandIntentParseHistoryItem(BaseModel):
@@ -115,97 +115,22 @@ class ProductCandidate(BaseModel):
     main_image_url: str | None = Field(default=None, description="用于 Java 或前端展示的主图 URL。")
 
 
-class SubjectMeasurements(BaseModel):
-    """Current-message measurements for the person being advised."""
-
-    model_config = ConfigDict(extra="allow")
-
-    heightCm: float | None = Field(default=None, description="归一化后的身高，单位厘米。")
-    weightKg: float | None = Field(default=None, description="归一化后的体重，单位公斤。")
-    originalText: str | None = Field(default=None, description="本轮消息中的原始测量文本。")
-    normalizedFrom: str | None = Field(default=None, description="单位归一化方式，例如 ASSUMED_JIN。")
-    subject: str | None = Field(default=None, description="咨询对象：SELF、OTHER 或 UNKNOWN。")
-    scope: str | None = Field(default=None, description="测量值的有效范围。")
-    source: str | None = Field(default=None, description="测量值来源。")
-
-
-class IntentConstraint(BaseModel):
-    """One v3 demand condition with provenance and filtering strength."""
-
-    model_config = ConfigDict(extra="allow")
-
-    id: str
-    field: str
-    operator: Literal["EQUALS", "CONTAINS", "MAX"]
-    values: list[str] = Field(default_factory=list)
-    strength: Literal["HARD", "SOFT"]
-    origin: Literal["USER_EXPLICIT", "PROFILE", "SYSTEM_DERIVED", "LEGACY_UNPROVENANCED"]
-    originTurnId: str | None = None
-    derivedFromConstraintId: str | None = None
-    scope: Literal["ACTIVE_DEMAND"] | None = None
-    weight: float | None = None
-
-    @model_validator(mode="after")
-    def validate_java_invariants(self):
-        if not self.id.strip() or not self.field.strip() or not self.values:
-            raise ValueError("constraint id, field and values are required")
-        if any(not value.strip() for value in self.values):
-            raise ValueError("constraint values cannot contain blanks")
-        if self.strength == "HARD" and self.weight is not None:
-            raise ValueError("hard constraints cannot carry ranking weight")
-        if self.origin == "SYSTEM_DERIVED":
-            if self.derivedFromConstraintId is None or not self.derivedFromConstraintId.strip():
-                raise ValueError("derived constraints require a parent constraint id")
-        elif self.derivedFromConstraintId is not None:
-            raise ValueError("non-derived constraints cannot carry a parent constraint id")
-        return self
-
-
 class DemandIntent(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    version: str = Field(default="demand-intent-v3", description="Java 侧需求解析契约版本。")
-    requestType: str | None = Field(default=None, description="Java 维护的规范主任务。")
-    requestedCapabilities: list[str] = Field(default_factory=list, description="同一回答需要执行的附加能力。")
-    hardFilters: list[IntentConstraint | str] = Field(
-        default_factory=list,
-        description="Java 已经用于候选池过滤的硬约束。",
-    )
-    softPreferences: list[IntentConstraint | str] = Field(
-        default_factory=list,
-        description="Python 可用于排序解释的软偏好。",
-    )
-    subjectMeasurements: SubjectMeasurements | None = Field(default=None, description="当前咨询对象的会话级测量值。")
-
-    @model_validator(mode="after")
-    def validate_constraint_partitions(self):
-        if self.version == "demand-intent-v3" and any(
-            isinstance(constraint, str)
-            for constraint in self.hardFilters + self.softPreferences
-        ):
-            raise ValueError("demand-intent-v3 requires structured constraints")
-        if any(
-            constraint.strength != "HARD"
-            for constraint in self.hardFilters
-            if isinstance(constraint, IntentConstraint)
-        ):
-            raise ValueError("hardFilters contains a constraint with the wrong strength")
-        if any(
-            constraint.strength != "SOFT"
-            for constraint in self.softPreferences
-            if isinstance(constraint, IntentConstraint)
-        ):
-            raise ValueError("softPreferences contains a constraint with the wrong strength")
-        return self
-
-
-class MatchedDimension(BaseModel):
-    """Candidate fact that Java can independently verify against demand intent."""
-
-    dimension: str = Field(..., description="匹配的需求维度。")
-    requested_value: str = Field(..., description="需求中的标准值。")
-    candidate_value: str = Field(..., description="候选商品中的可复核值。")
-    evidence_source: str = Field(..., description="映射到 Java 候选字段的证据源。")
+    version: str = Field(default="demand-intent-v1", description="Java 侧需求解析契约版本。")
+    source: str = Field(default="java-rule", description="需求解析来源，当前由 Java 规则解析器生成。")
+    rawQuery: str = Field(default="", description="用户原始自然语言需求。")
+    targetGender: str | None = Field(default=None, description="Java 解析出的目标性别硬过滤。")
+    category: str | None = Field(default=None, description="Java 商品库标准分类名。")
+    scene: list[str] = Field(default_factory=list, description="Java 解析出的场景偏好。")
+    style: list[str] = Field(default_factory=list, description="Java 解析出的风格偏好。")
+    budgetMax: int | float | None = Field(default=None, description="Java 解析出的预算上限。")
+    attributes: list[str] = Field(default_factory=list, description="Java 解析出的视觉或功能偏好。")
+    hardFilters: list[str] = Field(default_factory=list, description="Java 已经用于候选池过滤的字段。")
+    softPreferences: list[str] = Field(default_factory=list, description="Python 可用于排序解释的偏好字段。")
+    confidence: float | None = Field(default=None, description="Java 解析置信度。")
+    missingSlots: list[str] = Field(default_factory=list, description="还缺少、可用于追问的槽位。")
 
 
 class ProductRef(BaseModel):
@@ -213,11 +138,11 @@ class ProductRef(BaseModel):
     sku_id: int | str = Field(..., description="助手回复中所引用的 Java SKU ID。")
     reason: str = Field(..., description="对用户可见的该商品推荐理由。")
     rank_score: float | None = Field(default=None, description="来自 Python 工作流的可选排名得分。")
-    outfit_role: str | None = Field(default=None, description="该商品在组合穿搭中的角色。")
-    matched_dimensions: list[MatchedDimension] = Field(
+    matched_dimensions: list[dict[str, Any]] = Field(
         default_factory=list,
-        description="Java 可根据候选事实复核的显式需求匹配证据。",
+        description="可选结构化匹配证据；Java 会在接受商品引用前重新校验。",
     )
+    outfit_role: str | None = Field(default=None, description="可选穿搭角色；Java 会按商品分类重新校验。")
 
 
 class SuggestedAction(BaseModel):
@@ -263,10 +188,6 @@ class PythonChatResponse(BaseModel):
     answer: str = Field(..., description="对用户可见的助手回答。")
     intent: str = Field(..., description="Python 工作流检测到的用户意图。")
     product_refs: list[ProductRef] = Field(default_factory=list, description="Python 选择的商品引用列表。")
-    rejected_reasons: dict[str, int] = Field(
-        default_factory=dict,
-        description="Python 候选评估中按原因聚合的拒绝数量。",
-    )
     suggested_actions: list[SuggestedAction] = Field(default_factory=list, description="建议 Java/前端执行的动作列表。")
     debug: dict[str, Any] | None = Field(default=None, description="仅在请求要求时才包含的内部调试负载。")
 
