@@ -19,6 +19,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          #开启 pip 缓存，加速后续构建（耗时从 45s 降到几秒）
+          cache: "pip"
 
       - name: Install dependencies
         run: |
@@ -35,4 +37,6 @@ jobs:
         run: interrogate -v -i --fail-under=30 clothing_assistant
 
       - name: Unit tests
-        run: python -m unittest discover -v
+        #通过 -W ignore::DeprecationWarning 显式忽略第三方库的废弃警告
+        # 确保只有业务代码逻辑报错/断言失败时，CI 才会标红
+        run: python -W ignore::DeprecationWarning -m unittest discover -v
