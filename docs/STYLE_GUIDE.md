@@ -213,7 +213,7 @@ interrogate -v -i --fail-under=30 clothing_assistant
 
 ```powershell
 python -m compileall -q clothing_assistant tests
-python -m unittest discover -v
+python -m pytest -q
 ```
 
 安装 pre-commit：

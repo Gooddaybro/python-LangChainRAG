@@ -159,7 +159,7 @@ RAG 只负责颜色搭配、洗涤养护、风格场景这类解释性知识。
 ## Test
 
 ```powershell
-python -m unittest discover -v
+python -m pytest -q
 python -m compileall -q clothing_assistant tests
 ```
 
@@ -177,7 +177,7 @@ python -m clothing_assistant.agent.eval_report
 
 ```powershell
 python -m clothing_assistant.agent.answer_quality_report
-python -m unittest tests.test_answer_quality_report -v
+python -m pytest -q tests/test_answer_quality_report.py
 ```
 
 生成真实向量检索报告。它不使用 fake chunks，专门统计正向问题的命中率和超出知识范围问题的错误接受率：

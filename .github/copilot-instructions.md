@@ -35,7 +35,7 @@ Before proposing a change as complete, run the relevant local checks:
 
 ```powershell
 python -m compileall -q clothing_assistant tests
-python -m unittest discover -v
+python -m pytest -q
 ruff check clothing_assistant tests
 interrogate -v -i --fail-under=30 clothing_assistant
 ```

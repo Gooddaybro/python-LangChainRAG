@@ -1,9 +1,11 @@
 import unittest
+from unittest.mock import patch
 
 from clothing_assistant.agent.router import intent_router
 from clothing_assistant.agent.langgraph_executor import run_langgraph_agent
 from clothing_assistant.application.recommendation_service import build_product_refs, build_product_rerank_result
 from clothing_assistant.tools.size_tool import normalize_measurement_query, run_size_tool
+from tests.fakes import FakeEmbeddings
 
 
 class RecommendationServiceTests(unittest.TestCase):
@@ -517,29 +519,35 @@ class RecommendationServiceTests(unittest.TestCase):
 
     def test_same_thread_does_not_reuse_previous_size_state(self):
         thread_id = "size-switch-thread"
-        first = run_langgraph_agent(
-            "177 130 怎么穿？",
-            thread_id=thread_id,
-            request_id="req-size-switch-1",
-            session_id="session-size-switch",
-        )
-        second = run_langgraph_agent(
-            "160 60kg穿什么码呢？",
-            chat_history=[
-                {
-                    "user_query": "177 130 怎么穿？",
-                    "assistant_answer": first["answer"],
-                }
-            ],
-            thread_id=thread_id,
-            request_id="req-size-switch-2",
-            session_id="session-size-switch",
-        )
+        embeddings = FakeEmbeddings()
+        with patch(
+            "clothing_assistant.infrastructure.vector_store.get_embeddings",
+            return_value=embeddings,
+        ):
+            first = run_langgraph_agent(
+                "177 130 怎么穿？",
+                thread_id=thread_id,
+                request_id="req-size-switch-1",
+                session_id="session-size-switch",
+            )
+            second = run_langgraph_agent(
+                "160 60kg穿什么码呢？",
+                chat_history=[
+                    {
+                        "user_query": "177 130 怎么穿？",
+                        "assistant_answer": first["answer"],
+                    }
+                ],
+                thread_id=thread_id,
+                request_id="req-size-switch-2",
+                session_id="session-size-switch",
+            )
 
         size_result = second["debug"]["tool_results"]["size_tool"]
         self.assertEqual(size_result["recommended_size"], "M")
         self.assertEqual(size_result["measurements"]["height_cm"], 160.0)
         self.assertEqual(size_result["measurements"]["weight_jin"], 120.0)
+        self.assertTrue(embeddings.queries)
 
     def test_build_product_refs_selects_only_java_candidates_matching_size(self):
         candidates = [

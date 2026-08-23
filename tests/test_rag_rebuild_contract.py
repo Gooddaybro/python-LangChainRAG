@@ -22,6 +22,8 @@ class RagRebuildContractTests(unittest.TestCase):
         response_schema = load_schema("rag-rebuild-response.schema.json")
 
         self.assertEqual(set(request_schema["required"]), {"taskId", "source"})
+        self.assertFalse(request_schema["additionalProperties"])
+        self.assertEqual(set(request_schema["properties"]), set(request_schema["required"]))
         self.assertEqual(
             set(response_schema["required"]),
             {
@@ -33,6 +35,8 @@ class RagRebuildContractTests(unittest.TestCase):
                 "replayed",
             },
         )
+        self.assertFalse(response_schema["additionalProperties"])
+        self.assertEqual(set(response_schema["properties"]), set(response_schema["required"]))
 
     def test_requested_event_fields_match_shared_contract(self):
         event_schema = load_schema("ai-task-requested.schema.json")
@@ -50,6 +54,8 @@ class RagRebuildContractTests(unittest.TestCase):
                 "traceparent",
             },
         )
+        self.assertFalse(event_schema["additionalProperties"])
+        self.assertEqual(set(event_schema["properties"]), set(event_schema["required"]))
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ RAG 解释性知识检索
 常用本地命令：
 
 ```powershell
-python -m unittest discover -v
+python -m pytest -q
 python -m compileall -q clothing_assistant tests
 ruff check clothing_assistant tests
 interrogate -v -i --fail-under=30 clothing_assistant

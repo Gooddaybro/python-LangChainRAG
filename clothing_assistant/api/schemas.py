@@ -7,7 +7,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class DemandIntentParseHistoryItem(BaseModel):
@@ -115,22 +115,105 @@ class ProductCandidate(BaseModel):
     main_image_url: str | None = Field(default=None, description="用于 Java 或前端展示的主图 URL。")
 
 
+class IntentConstraint(BaseModel):
+    """One Java-authored v3 demand constraint with provenance."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    field: str
+    operator: Literal["EQUALS", "CONTAINS", "MAX"]
+    values: list[str] = Field(min_length=1)
+    strength: Literal["HARD", "SOFT"]
+    origin: Literal["USER_EXPLICIT", "PROFILE", "SYSTEM_DERIVED", "LEGACY_UNPROVENANCED"]
+    originTurnId: str | None = None
+    derivedFromConstraintId: str | None = None
+    scope: Literal["ACTIVE_DEMAND"] | None = None
+    weight: float | None = None
+
+    @field_validator("id", "field")
+    @classmethod
+    def core_text_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("constraint id and field must not be blank")
+        return value
+
+    @field_validator("values")
+    @classmethod
+    def values_must_not_contain_blanks(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() for value in values):
+            raise ValueError("constraint values must not contain blanks")
+        return values
+
+    @model_validator(mode="after")
+    def validate_provenance_and_weight(self):
+        if self.strength == "HARD" and self.weight is not None:
+            raise ValueError("hard constraints cannot carry ranking weight")
+        if self.origin == "SYSTEM_DERIVED":
+            if not self.derivedFromConstraintId or not self.derivedFromConstraintId.strip():
+                raise ValueError("derived constraints require a parent constraint id")
+        elif self.derivedFromConstraintId is not None:
+            raise ValueError("non-derived constraints cannot carry a parent constraint id")
+        return self
+
+
+class SubjectMeasurements(BaseModel):
+    """Measurements for the person in the active demand, not necessarily the signed-in user."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    heightCm: float | None = None
+    weightKg: float | None = None
+    originalText: str = ""
+    normalizedFrom: str | None = None
+    subject: Literal["SELF", "OTHER", "UNKNOWN"] = "UNKNOWN"
+    scope: Literal["ACTIVE_DEMAND"] = "ACTIVE_DEMAND"
+    source: str = "CURRENT_MESSAGE"
+
+
 class DemandIntent(BaseModel):
+    """Current v3 demand snapshot with read-only compatibility for legacy extra fields."""
+
     model_config = ConfigDict(extra="allow")
 
-    version: str = Field(default="demand-intent-v1", description="Java 侧需求解析契约版本。")
-    source: str = Field(default="java-rule", description="需求解析来源，当前由 Java 规则解析器生成。")
-    rawQuery: str = Field(default="", description="用户原始自然语言需求。")
-    targetGender: str | None = Field(default=None, description="Java 解析出的目标性别硬过滤。")
-    category: str | None = Field(default=None, description="Java 商品库标准分类名。")
-    scene: list[str] = Field(default_factory=list, description="Java 解析出的场景偏好。")
-    style: list[str] = Field(default_factory=list, description="Java 解析出的风格偏好。")
-    budgetMax: int | float | None = Field(default=None, description="Java 解析出的预算上限。")
-    attributes: list[str] = Field(default_factory=list, description="Java 解析出的视觉或功能偏好。")
-    hardFilters: list[str] = Field(default_factory=list, description="Java 已经用于候选池过滤的字段。")
-    softPreferences: list[str] = Field(default_factory=list, description="Python 可用于排序解释的偏好字段。")
-    confidence: float | None = Field(default=None, description="Java 解析置信度。")
-    missingSlots: list[str] = Field(default_factory=list, description="还缺少、可用于追问的槽位。")
+    version: str = Field(default="demand-intent-v3", description="Java 侧需求解析契约版本。")
+    requestType: str | None = Field(default=None, description="Java 判定的当前请求类型。")
+    requestedCapabilities: list[str] = Field(default_factory=list, description="本轮需要的能力集合。")
+    hardFilters: list[IntentConstraint] | list[str] = Field(
+        default_factory=list,
+        description="Java 已应用的硬过滤；字符串列表仅用于兼容旧版请求。",
+    )
+    softPreferences: list[IntentConstraint] | list[str] = Field(
+        default_factory=list,
+        description="Python 可用于排序解释的偏好；字符串列表仅用于兼容旧版请求。",
+    )
+    subjectMeasurements: SubjectMeasurements | None = Field(
+        default=None,
+        description="当前需求主体的测量信息。",
+    )
+
+    @model_validator(mode="after")
+    def constraints_must_match_partition(self):
+        if any(
+            isinstance(constraint, IntentConstraint) and constraint.strength != "HARD"
+            for constraint in self.hardFilters
+        ):
+            raise ValueError("hardFilters can only contain HARD constraints")
+        if any(
+            isinstance(constraint, IntentConstraint) and constraint.strength != "SOFT"
+            for constraint in self.softPreferences
+        ):
+            raise ValueError("softPreferences can only contain SOFT constraints")
+        return self
+
+
+class MatchedDimension(BaseModel):
+    """Structured evidence explaining why a returned product matched one demand dimension."""
+
+    dimension: str
+    requested_value: str
+    candidate_value: str
+    evidence_source: str
 
 
 class ProductRef(BaseModel):
@@ -138,7 +221,7 @@ class ProductRef(BaseModel):
     sku_id: int | str = Field(..., description="助手回复中所引用的 Java SKU ID。")
     reason: str = Field(..., description="对用户可见的该商品推荐理由。")
     rank_score: float | None = Field(default=None, description="来自 Python 工作流的可选排名得分。")
-    matched_dimensions: list[dict[str, Any]] = Field(
+    matched_dimensions: list[MatchedDimension] = Field(
         default_factory=list,
         description="可选结构化匹配证据；Java 会在接受商品引用前重新校验。",
     )
@@ -188,6 +271,7 @@ class PythonChatResponse(BaseModel):
     answer: str = Field(..., description="对用户可见的助手回答。")
     intent: str = Field(..., description="Python 工作流检测到的用户意图。")
     product_refs: list[ProductRef] = Field(default_factory=list, description="Python 选择的商品引用列表。")
+    rejected_reasons: dict[str, int] = Field(default_factory=dict, description="候选被拒绝的稳定原因及数量。")
     suggested_actions: list[SuggestedAction] = Field(default_factory=list, description="建议 Java/前端执行的动作列表。")
     debug: dict[str, Any] | None = Field(default=None, description="仅在请求要求时才包含的内部调试负载。")
 
